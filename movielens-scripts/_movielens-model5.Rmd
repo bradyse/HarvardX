@@ -1,0 +1,64 @@
+## Movie and User Effects with SVD
+
+In removing both the movie and user bias, our goal is to use SVD to identify the most important factors beyond systematic movie and user effects. The resulting patterns calculated from the SVD (i.e., the predicted residuals) can, then, be used to add to the final predicted values, including the global average, $\hat{\mu}$, movie effects, $b_i$, and user effects, $b_u$. First, we calculate `mu_hat` from the training set. Next, we calculate the `movie_means` as we had done before. To calculate user means, we first join `movie_means` with the training set and, then, remove the global average and movie means from each user's ratings.
+
+```{r eval=FALSE, include=TRUE}
+mu_hat <- mean(train_set$rating)
+
+movie_means <- train_set[, .(b_i = mean(rating - mu_hat)), by = movieId]
+
+user_means <- train_set[movie_means, on = "movieId"][
+  , .(b_u = mean(rating - mu_hat - b_i)), by = userId]
+
+```
+
+To remove the user and movie bias from the ratings, we copy the training dataset to `train_resid` to indicate that it will contain residuals. We, then, join the $b_i$ and $b_u$ terms based on `movieId` and `userId`, respectively. Finally, we calculate the residuals by subtracting the global mean, movie means, and user means from each user's ratings. Using these columns, we create a sparse Matrix object that includes the residuals ready for SVD calculations.
+
+```{r eval=FALSE, include=TRUE}
+train_resid <- train_set
+train_resid[movie_means, b_i := i.b_i, on = "movieId"]
+train_resid[user_means, b_u := i.b_u, on = "userId"]
+train_resid[, residual := rating - mu_hat - b_i - b_u]
+
+y <- sparseMatrix(
+  i = train_resid$userId_x,
+  j = train_resid$movieId_x,
+  x = train_resid$residual,
+  dimnames = list(
+    user = levels(factor(train_resid$userId)),
+    movie = levels(factor(train_resid$movieId))
+  ))
+```
+
+To calculate the approximate singular values and corresponding singular vectors, we use the `irlba()` function, and as before, we select $k = 50$ as the number of right and left singular vectors to estimate. Once the singular values are estimated, we calculate the predicted matrix using the SVD formula. Using the correct row and column position for each user and movie, we store the extracted predicted matrix values into `pred_residuals`. Similarly, we create vectors for movie and user effects based upon their `movieId` and `userId` positioning in the test dataset. Finally, we use the `clamp()` function created earlier to estimate the predicted values, by adding together the global mean, movie effects, user effects, and predicted residuals.
+
+```{r eval=FALSE, include=TRUE}
+t1 <- Sys.time()
+
+s <- irlba(y, nv = 50, nu = 50)
+pred_mat <- s$u %*% diag(s$d) %*% t(s$v)
+
+pred_residuals <- pred_mat[cbind(test_set$userId_x, test_set$movieId_x)]
+
+test_b_i <- movie_means$b_i[match(test_set$movieId, movie_means$movieId)]
+
+test_b_u <- user_means$b_u[match(test_set$userId, user_means$userId)]
+
+pred <- clamp(mu_hat + test_b_i + test_b_u + pred_residuals)
+
+Sys.time() - t1
+```
+
+```{r echo=FALSE}
+cat("Time difference of 1.539259 mins")
+```
+
+The RMSE has greatly improved after removing both movie and user effects before calculating the SVD. Next, we will determine whether the accuracy could be improved with regularization. 
+
+```{r eval=FALSE, include=TRUE}
+fit5_rmse <- RMSE(pred, test_set$rating)
+```
+
+```{r}
+fit5_rmse
+```

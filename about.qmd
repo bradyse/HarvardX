@@ -1,0 +1,15 @@
+---
+title: "About"
+image: images/profile2025_small.JPG
+about: 
+  template: solana
+  links:
+    - icon: linkedin
+      text: Linkedin
+      href: https://www.linkedin.com/in/sara-brady/
+    - icon: github
+      text: GitHub
+      href: https://github.com/bradyse/
+---
+
+My name is Sara Brady, and I am a policy researcher for a nonprofit, [First Five Nebraska](https://firstfivenebraska.org/). I used to be an associate professor of psychology for many years after earning a Ph.D. in Experimental Psychology from Texas Christian University. I've taught countless students about research methods, statistics, and social and personality psychology. I've also advised numerous academic and nonprofit researchers on research design and analysis as a consultant. Currently, I use quantitative and qualitative methodologies to understand policies and legislation affecting young children. My work informs policymakers on issues affecting early care and education, as well as maternal and infant health.

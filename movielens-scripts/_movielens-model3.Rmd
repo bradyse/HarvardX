@@ -1,0 +1,72 @@
+## Regularization of Movie & User Effect
+
+The concept of regularization takes into account each predictor's effect size when calculating their least squares estimates. In this case, we assume that movies or users with a large number of ratings are more reliable than movies or users with a small number of ratings. When calculating the mean of the least squares estimate, we add a penalty term $\lambda$ to the sample size in the denominator. Therefore, in the case of estimating the movie effect term $b_i$, we previously calculated $mean(y_{u,i} - \hat{\mu})$ or written out in summation notation:
+
+$$
+\frac{1}{n}\sum_{i=1}^{n} (y_{u,i} - \hat{\mu})
+$$
+
+However with a penalized least squares estimate of $b_i$, we add $\lambda$ as a penalty term to the denominator:
+
+$$
+\frac{1}{n+\lambda}\sum_{i=1}^{n} (y_{u,i} - \hat{\mu})
+$$
+
+If we use, for example, $\lambda = 5$ This means that for movies like The Shawshank Redemption with over 25,000 ratings in the training set, adding 5 to the `n()` calculation will be trivial. But for movies with only 1 rating, dividing by `n() + 5` will mean that the least squares estimate will be essentially 0 after subtracting $\hat{b}_i$ from the average $\hat{\mu}$.
+
+To ensure that we select the optimal value of $\lambda$, we will write a function that estimates each of the terms in our model based upon different levels of `lambdas`. We, then, calculate the RMSE for each of the models that differ only based on the `lambdas` value. Because we are calculating these effects 41 times (length of `lambdas`), it's a good idea to document processing time using the `Sys.time()` function.
+
+```{r, eval=FALSE}
+lambdas <- seq(0, 10, 0.25)
+
+t1 <- Sys.time()
+
+rmses <- sapply(lambdas, function(l){
+     mu <- mean(train_set$rating)
+     
+     b_i <- train_set %>% 
+          group_by(movieId) %>%
+          summarize(b_i = sum(rating - mu)/(n()+l))
+     
+     b_u <- train_set %>% 
+          left_join(b_i, by="movieId") %>%
+          group_by(userId) %>%
+          summarize(b_u = sum(rating - b_i - mu)/(n()+l))
+     
+     predicted_ratings <- test_set %>% 
+          left_join(b_i, by = "movieId") %>%
+          left_join(b_u, by = "userId") %>%
+          mutate(pred = clamp(mu + b_i + b_u)) %>%
+          pull(pred)
+     
+     return(RMSE(predicted_ratings, test_set$rating))
+})
+
+Sys.time() - t1
+```
+
+```{r echo=FALSE}
+cat("Time difference of 1.942676 mins")
+```
+
+
+To visualize whether we selected an appropriate range for $\lambda$, we plot the RMSE values against the values in `lambdas`.
+
+```{r, eval=FALSE}
+ggplot(data.frame(lambdas, rmses)) +
+  geom_point(aes(lambdas, rmses))
+```
+
+![](images/lambda-plot-m3.png){width="75%"}
+
+Despite the extra computation, we see that the $\lambda$ with the lowest RMSE was not much better than the RMSE from the non-regularized movie & user effects model: `fit2_rmse` = `r round(fit2_rmse, 4)`. This suggests that we need a model that can take into account the patterns of users and movies beyond their averages.
+
+```{r, eval=FALSE}
+lambda_m3 <- lambdas[which.min(rmses)]
+fit3_rmse <- min(rmses)
+```
+
+```{r}
+lambda_m3
+fit3_rmse
+```

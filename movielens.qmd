@@ -1,0 +1,52 @@
+---
+title: "Capstone MovieLens Project"
+subtitle: "HarvardX Data Science Professional Certificate"
+author: "Sara E. Brady, Ph.D."
+date: "`r Sys.Date()`"
+bibliography: movielens-scripts/movielens-references.bib
+csl: movielens-scripts/apa.csl
+---
+
+```{r include=FALSE}
+
+knitr::opts_chunk$set(
+  collapse = TRUE,
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+options(scipen=999)
+
+load("data/eda_objects.RData")
+load("data/model0_objects.RData")
+load("data/model1_objects.RData")
+load("data/model2_objects.RData")
+load("data/model3_objects.RData")
+load("data/model4a_objects.RData")
+load("data/model4b_objects.RData")
+load("data/model5_objects.RData")
+load("data/model6_objects.RData")
+load("data/results_objects.RData")
+```
+
+{{< include movielens-scripts/_movielens-overview.Rmd >}}
+
+{{< include movielens-scripts/_movielens-eda.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model0.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model1.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model2.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model3.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model4a.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model4b.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model5.Rmd >}}
+
+{{< include movielens-scripts/_movielens-model6.Rmd >}}
+
+{{< include movielens-scripts/_movielens-results.Rmd >}}

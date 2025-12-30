@@ -1,0 +1,55 @@
+## Movie Effect with SVD
+
+To start with our SVD models, we will remove the movie-bias effect from the data prior to calculating the SVD. To save memory space and increase processing power, we will switch from the `dplyr` and `tidyr` packages' syntax to the `data.table` package syntax. After converting both datasets from `data.frame` objects to `data.table` objects, we then center the ratings around the average movie mean in the training set. Next, we use the `Matrix` package to create a sparse matrix object. 
+
+```{r eval=FALSE, include=TRUE}
+setDT(train_set)
+setDT(test_set)
+
+col_means <- train_set[, .(mean_ratings = mean(rating)), by = movieId]
+train_set[col_means, centered := rating - mean_ratings, on = "movieId"]
+
+y <- sparseMatrix(
+  i = as.integer(factor(train_set$userId)),
+  j = as.integer(factor(train_set$movieId)),
+  x = train_set$centered,
+  dimnames = list(
+    user = levels(factor(train_set$userId)), 
+    movie = levels(factor(train_set$movieId)))
+)
+```
+
+The `irlba()` function from the `irlba` package finds a few approximate singular values and corresponding singular vectors of the matrix `y`. Since we do not want to calculate the entire number of $p$ movies, we set the number of right singular vectors and left singular vectors that we want to estimate. In this case, we select $k = 50$ as our arbitrary starting point.
+
+To calculate the predicted matrix, `pred_mat`, we use the SVD formula to multiply the matrices together. To extract the predicted centered ratings for the test dataset, `pred_centered` extracts the corresponding cell from `pred_mat` using the user's row position and movie's column position. To extract the correct column means for the test dataset's movies, `movie_means` uses `match()` to find each test movie's position in the `col_means` table, retrieving the corresponding mean rating. The final predicted values, `pred`, are calculated by adding the centered predicted values to their corresponding movie mean. Finally, to benchmark the time it takes to run the algorithm, we track processing time.
+
+```{r eval=FALSE, include=TRUE}
+t1 <- Sys.time()
+
+s <- irlba(y, nv = 50, nu = 50)
+
+pred_mat <- s$u %*% diag(s$d) %*% t(s$v)
+
+pred_centered <- pred_mat[cbind(test_set$userId_x, test_set$movieId_x)]
+
+movie_means <- col_means$mean_ratings[match(test_set$movieId,col_means$movieId)]
+
+pred <- pred_centered + movie_means
+
+Sys.time() - t1
+```
+
+```{r echo=FALSE}
+cat("Time difference of 47.02883 secs")
+```
+
+
+After running our SVD model, we see that the accuracy has taken a step backwards. This SVD movie-effect RMSE is better than its least-squares counterpart (`fit1_rmse` = `r round(fit1_rmse, 4)`), but it is not better than the models where we also removed user bias. So far the regularized movie and user effects model had the best RMSE, but the difference between the regularized (`r round(fit3_rmse, 4)`) and non-regularized (`r round(fit2_rmse, 4)`) models are negligible. Next we will attempt to use SVD after removing both movie and user biases.
+
+```{r eval=FALSE, include=TRUE}
+fit4_rmse <- sqrt(mean((pred - test_set$rating)^2))
+```
+
+```{r}
+fit4_rmse
+```

@@ -1,0 +1,106 @@
+## Movie Effect Model
+
+Now that we have our naive RMSE to benchmark all other models, we start with modeling movie effects (also called *bias*) using linear regression. Here we add to our previous model a bias term $b_i$ to represent the average rating for movie $i$:
+
+$$
+Y_{u,i} = \mu + b_i + \varepsilon_{u,i}
+$$ here:
+
+-   $Y_{u,i}$ is the rating given by user $u$ of movie $i$
+-   $\mu$ is the "true" rating for all movies
+-   $b_i$ is the "true" rating for movie $i$
+-   $\varepsilon_{u,i}$ are independent errors sampled from the same distribution centered at 0
+
+Remember that in our RMSE equation we need to calculate $\hat{y}_i$, the predicted rating for observation $i$. Our goal, then, is to find the values that minimize the distance between our fitted model and the data (i.e., the least squares estimates). Here our model suggests that we can obtain our least squares estimates by taking the average for all ratings and add the average rating of each movie $i$. The most common way to do this in R is by using the `lm` function as shown below. However, **do not run this code**. We have over 10,000 movies and each movie would be a predictor in the model, meaning that R would attempt to calculate over 10,000 coefficient estimates, standard errors, *t* statistics, and *p* values.
+
+```{r, eval=FALSE}
+# DO NOT RUN
+fit <- lm(rating ~ movieId, data = train_set)
+```
+
+Because the least squares estimate $\hat{b}_i$ is simply the average of each user's rating of movie $i$ minus the average of all ratings, we can calculate $\hat{b}_i$ as follows.
+
+```{r, eval=FALSE}
+movie_avgs <- train_set |>  
+     group_by(movieId) |>  
+     summarize(avg_rating = mean(rating),
+               b_i_hat = mean(rating - mu_hat))
+```
+
+We then, calculate the predicted values as our model indicates by adding $\hat{\mu}$ (average of all ratings) to $\hat{b}_i$ (average rating of each movie).
+
+```{r, eval=FALSE}
+predicted_ratings <- mu_hat + test_set |> 
+  left_join(movie_avgs, by="movieId") |> 
+     pull(b_i_hat)
+```
+
+With our predicted ratings from our movie effects model, we see that our RMSE improves.
+
+```{r, eval=FALSE}
+fit1_rmse <- RMSE(predicted_ratings, test_set$rating)
+```
+
+```{r}
+fit1_rmse
+```
+
+Although our accuracy metric improved, our predicted ratings were only accurate within 0.944 points. To explore why relying on movie effects alone may be insufficient, we can calculate the top 1% of movies and store these movie's ID numbers. In this case, the top 1% of movies refers to movies that had average ratings in the top 1 percentile of all movies. We, then, create a data frame that includes the counts of the number of user ratings.
+
+```{r,eval=FALSE}
+top_movies <- movie_avgs |> 
+  filter(b_i_hat > quantile(b_i_hat, .99)) |> 
+  pull(movieId)
+
+top1perc <- train_set |> 
+  left_join(movie_avgs, by = "movieId") |> 
+  filter(movieId %in% top_movies) |> 
+  group_by(movieId, title) |> 
+  reframe(n = n(), avg_rating) |> 
+  distinct()
+```
+
+There were 107 movies that were ranked in the top 1% with average ratings at or above 4.1947.
+
+```{r}
+nrow(top1perc)
+range(top1perc$avg_rating)
+```
+If we look at a random sample of this data frame we see that the number of ratings vary considerably by movie.
+
+```{r}
+top1perc |> 
+  slice_sample(n = 10)
+```
+
+In fact, we see that among the top rated 1% of movies, almost half of them were only rated once. This would be analogous to a user sorting movies by rating and then seeing that a large proportion of them had only a single rating.
+
+```{r, eval = FALSE}
+top1perc |> 
+  ggplot(aes(n)) +
+  geom_histogram(binwidth = 500,
+                 color = "lightgray") +
+  labs(title = "Frequency of Ratings for Top 1% of Movies",
+       x = "Number of Ratings per Movie")
+```
+
+![](images/top-rated-movies.png){width="75%"}
+
+We can also perform a check on the residuals. If the relationship between the ratings and the movie ratings is linear, we should see that there is no relationship between residuals and predicted values when plotting them. With a continuous outcome variable, we would see the residuals "bounce" around the 0 line. Since our outcome variable is on a 5-point scale, we do not see this pattern. However, given the lack of curvature and that the best-fit line is 0, we see that the variances of the error terms are equal. There do appear to be some outliers, such that we predicted 5s but the actual ratings were much lower.
+
+```{r, eval = FALSE}
+fit1_resid <- test_set |> 
+  left_join(movie_avgs, by='movieId') |> 
+  mutate(predicted_ratings = mu_hat + b_i_hat,
+         residuals = rating - predicted_ratings)
+
+p_fit1_resid <- fit1_resid |> 
+  ggplot(aes(x = predicted_ratings, y = residuals)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Residual Plot for Movie Effects Model")
+
+p_fit1_resid
+```
+
+![](images/fit1-residuals.png){width="75%"}

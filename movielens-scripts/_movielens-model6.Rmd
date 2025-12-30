@@ -1,0 +1,126 @@
+## Regularized Movie & User Effects with SVD
+
+In the previous model, we removed both the movie and user effects from the data matrix before calculating the singular values. However, could we optimize the number of $k$ singular vectors to estimate? We could also add a penalty term $\lambda$ to the sample size when calculating the movie and user effects. In this model, we attempt to find an optimal $k$ and $\lambda$ value that will yield the lowest RMSE. To do this, we create a function that calculates movie and user effects at different levels of $\lambda$ and then use those calculations to estimate $k$ singular values and corresponding singular vectors.
+
+To start, we select values of `lambda` from 0 to 5 in increments of 0.5 and values of `k` at either 50 or 100. Below we use the `expand.grid()` function to create a data frame from all combinations of `lambdas` and `k_values`. The final function will perform an SVD for each combination of `lambda` and `k` for a total of 22 different models.
+
+```{r}
+lambdas <- seq(0, 5, 0.50)
+k_values <- c(50, 100)
+
+grid <- expand.grid(lambda = lambdas, k = k_values)
+
+grid
+```
+
+Performing 22 SVD calculations on this large of a dataset will require a lot of memory and computing power. Therefore, we will use the `doParallel` package to help. We will first create two copies of R running in parallel, called "clusters." To ensure the two copies of R can communicate to each other we use the `registerDoParallel()` function. To ensure the essential objects from the R environment are copied to both copies of R, we use the `clusterExport()` function to copy the training and test datasets, as well as the average rating of training set.
+
+```{r eval=FALSE, include=TRUE}
+mu_hat <- mean(train_set$rating)
+
+nc <- 2
+cl <- makeCluster(nc)
+registerDoParallel(cl)
+
+clusterEvalQ(cl, {
+  library(data.table)
+  library(Matrix)
+  library(irlba)
+})
+
+clusterExport(cl, c("train_set", "test_set", "mu_hat"))
+```
+
+In order to calculate the RMSE values of the 22 different models, we write a function, `rmses()` that takes in `lambda` and `k` values as arguments and returns the RMSE for each model. The function does the following:
+
+-   `movie_means_reg`: Calculate the $b_i$ movie effects with an added penalty term, `lambda`, to the sample size in the denominator when calculating the mean.
+-   `user_means_reg`: Calculate the $b_u$ user effects using the added penalty term as above.
+-   `train_resid`: Copy the training set as before to indicate that this will be the dataset that contains residuals.
+    -   Join the regularized movie and user means to the `train_resid` dataset so that we can, then, calculate the residual for each observation.
+    -   Create the residual column in `train_resid` by subtracting the global mean, movie bias, and user bias from each observed rating.
+-   `y`: Using the `sparseMatrix()` function, create a sparse matrix necessary for the `irbla()` function.
+-   `s`: Calculate the approximate singular values and singular vectors using the `irbla()` function. We use the function's argument variable `k` for truncating the SVD.
+-   `pred_residuals`: Calculate the predicted residual matrix using the SVD equation.
+-   `test_residuals`: Using the users' and movies' row/column positioning in the test dataset, extract the predicted residuals.
+-   `test_b_i`: Create a vector for the movie effects based upon each movie ID's position in the test dataset
+-   `test_b_u`: Create a vector for the user effects based on user ID's test set position.
+-   `pred`: Use the `clamp()` function to save the predicted ratings according to the final model's formula, by adding together the global average, movie effect, user effect, and predicted residuals.
+-   Finally, return the RMSE by taking the square root of the mean of the squared residuals between the predicted and actual movie ratings.
+
+```{r eval = FALSE, include = TRUE}
+rmses <- function(lambda, k){
+  movie_means_reg <- train_set[, .(b_i = sum(rating - mu_hat)/(.N + lambda)), by = movieId_x]
+  
+  user_means_reg <- train_set[movie_means_reg, on = "movieId_x"][
+    , .(b_u = sum(rating - mu_hat - b_i)/(.N + lambda)), by = userId_x]
+  
+  train_resid <- train_set
+  train_resid[movie_means_reg, b_i := i.b_i, on = "movieId_x"]
+  train_resid[user_means_reg, b_u := i.b_u, on = "userId_x"]
+  train_resid[, residual:= rating - mu_hat - b_i - b_u]
+  
+  y <- sparseMatrix(
+    i = train_resid$userId_x,
+    j = train_resid$movieId_x,
+    x = train_resid$residual
+  )
+  
+  s <- irlba(y, nv = k, nu = k)
+  pred_residuals <- s$u %*% diag(s$d) %*% t(s$v)
+  
+  test_residuals <- pred_residuals[cbind(test_set$userId_x, test_set$movieId_x)]
+  
+  test_b_i <- movie_means_reg[.(test_set$movieId_x), b_i, on = "movieId_x"]
+  test_b_u <- user_means_reg[.(test_set$userId_x), b_u, on = "userId_x"]
+  
+  pred <- clamp(mu_hat + test_b_i + test_b_u + test_residuals)
+
+  RMSE(pred, test_set$rating)
+}
+```
+
+Now that we have set up our parallel processing and written our function, we use the `foreach` package (attached from the `doParallel` package) to evaluate in parallel the `rmses()` function we created above for each row of our `grid` data frame. Within our `rmses()` function, we pass through the $i$th row of the `lambda` and `k` columns. We use the `.combine = c` argument to create a vector of all the RMSE values calculated from each of the 22 models. As usual, we document the processing time using `Sys.time()`. Note that this code chunk will take between 30-40 minutes of processing time. If possible, close all programs running in the background before running.
+
+```{r eval=FALSE, include=TRUE}
+t1 <- Sys.time()
+
+results <- foreach(i = 1:nrow(grid), .combine = c) %dopar% {
+  rmses(grid$lambda[i], grid$k[i])
+}
+
+Sys.time() - t1
+```
+
+```{r echo=FALSE}
+cat("Time difference of 34.44416 mins")
+```
+
+We store the results of all 22 RMSE calculations into a new column in the `grid` data frame. When we are finished with the entire process we close the created cluster using the `stopCluster()` and `stopImplicitCluster()` functions. Lastly, we plot the results.
+
+```{r eval=FALSE, include=TRUE}
+grid$rmse <- results 
+
+stopCluster(cl)
+stopImplicitCluster()
+
+lambda_plot <- ggplot(grid |> mutate(k = factor(k))) +
+  geom_point(aes(lambda, rmse, color = k))
+
+lambda_plot
+```
+
+![](images/lambda-plot-m6.png){width="75%"}
+
+As shown in the plot, the lowest RMSE value uses parameters of $\lambda = 5$ and $k = 50$. Despite the computationally intensive process, this final model is not much better than the non-regularized SVD movie and user effect model we calculated earlier. However, we will select this model with the given regularization parameters to predict movie ratings of the final hold-out test set.
+
+```{r eval=FALSE, include=TRUE}
+lambda_m6 <- grid[which.min(grid$rmse),"lambda"]
+k_m6 <- grid[which.min(grid$rmse),"k"]
+fit6_rmse <- min(grid$rmse)
+```
+
+```{r}
+lambda_m6
+k_m6
+fit6_rmse
+```

@@ -1,0 +1,242 @@
+## Creating Main Training and Final Hold-out Datasets
+
+The following code was developed by the HarvardX Team for the course, PH125.9x: Data Science: Capstone. The purpose of creating the `edx` dataset is to ensure reproducibility to train, develop, and select the final algorithm used for evaluating the RMSE. We will use this dataset for separating into training and test sets, as well as cross-validation in designing and testing the final algorithm. The `final_holdout_test` dataset will be used to test the final algorithm.
+
+```{r eval=FALSE, include=TRUE}
+##########################################################
+# Create edx and final_holdout_test sets 
+##########################################################
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+options(timeout = 120)
+
+dl <- "ml-10M100K.zip"
+if(!file.exists(dl))
+  download.file("https://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings_file <- "ml-10M100K/ratings.dat"
+if(!file.exists(ratings_file))
+  unzip(dl, ratings_file)
+
+movies_file <- "ml-10M100K/movies.dat"
+if(!file.exists(movies_file))
+  unzip(dl, movies_file)
+
+ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+                         stringsAsFactors = FALSE)
+colnames(ratings) <- c("userId", "movieId", "rating", "timestamp")
+ratings <- ratings %>%
+  mutate(userId = as.integer(userId),
+         movieId = as.integer(movieId),
+         rating = as.numeric(rating),
+         timestamp = as.integer(timestamp))
+
+movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+                        stringsAsFactors = FALSE)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- movies %>%
+  mutate(movieId = as.integer(movieId))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Final hold-out test set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.6 or later
+# set.seed(1) # if using R 3.5 or earlier
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in final hold-out test set are also in edx set
+final_holdout_test <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from final hold-out test set back into edx set
+removed <- anti_join(temp, final_holdout_test)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+saveRDS(edx, file = "../9_Capstone/data/edx.rds")
+saveRDS(final_holdout_test, file = "../9_Capstone/data/final_holdout_test.rds") 
+```
+
+## Data Exploration
+
+### Basic Structure
+
+From the training dataset we created above, we see that there are more than 9 million rows of data with six variables: `userId`, `movieId`, `rating`, `timestamp`, `title`, and `genres`. This data also appears to be organized into a long format, meaning that rows of data include repeated values of the first column (`userId`).
+
+Our ultimate goal is to use this dataset to predict users' movie ratings in the final hold-out test set. We will need to use data on users, movies, and ratings to predict the outcome variable, but other variables such as when the rating was given (`timestamp`) or `genres` may also be useful. The variable `titles` will be useful when exploring the data descriptively, but is likely not going to be useful since there will undoubtedly be duplicate movie titles. To index movies, the `movieId` variable will be the most useful.
+
+```{r eval=FALSE, include=TRUE}
+str(edx)
+```
+
+```{r, eval=FALSE, include=FALSE}
+str_output <- capture.output(str(edx))
+```
+
+```{r, echo=FALSE}
+writeLines(str_output)
+```
+
+### Distinct Values
+
+As mentioned earlier, a long data format means that ID variables are repeated. Therefore, to determine how many users, movies, and genres are included in this dataset, we use the `dplyr` package to count distinct values in each variable. From this, we see that over 69,000 users rated more than 10,000 movies from 797 unique genres.
+
+```{r eval=FALSE, include=TRUE}
+edx_ns <- edx |> 
+  reframe(n_users = n_distinct(userId),
+          n_movies = n_distinct(movieId),
+          n_genres = n_distinct(genres))
+```
+
+```{r}
+edx_ns
+```
+
+### Ratings
+
+To explore our outcome variable, we see that ratings range from 0.5 to 5.0.
+
+```{r eval=FALSE, include=TRUE}
+range(edx$rating)
+```
+
+```{r echo=FALSE}
+writeLines("[1] 0.5 5.0")
+```
+
+We will store the average rating so that we can visualize ratings in a plot. A histogram shows the negative skew of ratings. Although the average rating is about 3.5, the most common rating was 4 with over 2.5 million ratings in total.
+
+```{r eval=FALSE, include=TRUE}
+mu <- mean(edx$rating)
+
+edx |> 
+  group_by(rating) |> 
+  count() |> 
+  ggplot() +
+  geom_col(aes(rating, n)) +
+  geom_vline(xintercept = mu,
+             linetype = 2) +
+  annotate(geom = "text", x = 2.8, y = 3000000,
+           label = paste0("Mean = ", round(mu, 3)),
+           color = "red")
+```
+
+![](images/edx-ratings.png){width="75%"}
+
+### Ratings per User
+
+To determine the number of ratings per user, we count rows by `userId`. Descriptive statistics suggest that the number of user ratings varies considerably with the standard deviation being larger than the mean.
+
+```{r eval=FALSE, include=TRUE}
+ratings_users <- edx |> 
+  count(userId) |> 
+  reframe(N = n(),
+          Mean = mean(n),
+          Median = median(n),
+          SD = sd(n),
+          Min = min(n),
+          Max = max(n),
+          IQR.25 = quantile(n, 0.25),
+          IQR.75 = quantile(n, 0.75)) |> 
+  pivot_longer(everything(), names_to = "statistic")
+
+ratings_users
+```
+
+```{r echo=FALSE}
+ratings_users
+```
+
+Since the number of ratings per user is so positively skewed, transforming the x axis into log values allows us to see the distribution more clearly.
+
+```{r eval=FALSE, include=TRUE}
+avg_ratings_per_user <- ratings_users$value[which(ratings_users$statistic=="Mean")]
+
+count(edx, userId) |> 
+  ggplot() +
+  geom_histogram(aes(n), 
+                 bins = 60,
+                 color = "lightgray") +
+  scale_x_log10() +
+  geom_vline(xintercept = avg_ratings_per_user,
+             linetype = 2) +
+  annotate(geom = "text", x = 350, y = 3500,
+           label = paste0("Mean = ", round(avg_ratings_per_user, 3)),
+           color = "red")
+```
+
+![](images/edx-ratings-per-user.png){width="75%"}
+
+### Ratings per Movie
+
+As expected, the number of ratings per movie was heavily positively skewed with some movies being much more popular than others.
+
+```{r eval=FALSE, include=TRUE}
+ratings_movies <- edx |> 
+  count(movieId)
+
+ratings_movies_summary <- ratings_movies |> 
+  reframe(N = n(),
+          Mean = mean(n),
+          Median = median(n),
+          SD = sd(n),
+          Min = min(n),
+          Max = max(n),
+          IQR.25 = quantile(n, 0.25),
+          IQR.75 = quantile(n, 0.75)) |> 
+  pivot_longer(everything(), names_to = "statistic")
+```
+
+```{r}
+ratings_movies_summary
+```
+
+Over 100 movies only had a single rating, whereas the most frequently-rated movie, Pulp Fiction, had 31,362 ratings.
+
+```{r eval=FALSE, include=TRUE}
+filter(ratings_movies, n == 1) |> 
+  nrow()
+```
+
+```{r echo=FALSE}
+writeLines("[1] 126")
+```
+
+```{r eval=FALSE, include=TRUE}
+most_ratings <- ratings_movies |> 
+  left_join(select(edx, movieId, title) |> distinct(), 
+            by = "movieId") |> 
+  filter(n == max(n))
+```
+
+```{r}
+most_ratings
+```
+
+The histogram (log-scale transformed) reveals that the average number of ratings per movie is somewhere between 50 and 500, despite the fact that the mean is more than 800. Based upon this data and the data above, we can infer that there are going to be many instances where users did not rate a given movie. The challenge, therefore, is to estimate what their ratings would be on all 10,000+ movies.
+
+```{r eval=FALSE, include=TRUE}
+avg_ratings_per_movie <- ratings_movies_summary |> 
+  filter(statistic == "Mean") |> 
+  pull(value)
+
+count(edx, movieId) |> 
+  ggplot() +
+  geom_histogram(aes(n), 
+                 bins = 60,
+                 color = "lightgray") +
+  scale_x_log10() +
+  geom_vline(xintercept = avg_ratings_per_movie,
+             linetype = 2) +
+  annotate(geom = "text", x = 4275, y = 390,
+           label = paste0("Mean = ", round(avg_ratings_per_movie, 3)),
+           color = "red")
+```
+
+![](images/edx-ratings-per-movie.png){width="75%"}

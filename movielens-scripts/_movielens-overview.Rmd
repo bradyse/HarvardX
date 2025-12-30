@@ -1,0 +1,43 @@
+# Overview
+
+The **MovieLens** dataset [@movielens] contains user movie ratings from MovieLens, a movie recommendation service developed by a research lab at the University of Minnesota [@grouplens]. For this project, I created a movie recommendation system using the 10-million version of this dataset.
+
+The goal was to use machine learning to **generate predicted movie ratings and root mean squared error (RMSE) score**. Below are the steps that were used to:
+
+1.  Create the main training and final hold-out test datasets.
+
+2.  Train a machine learning algorithm using the main training set.
+
+3.  Select a final model based upon the main training set.
+
+4.  Predict movie ratings using the final hold-out test set.
+
+5.  Evaluate the accuracy of the generated predictions using the RMSE metric.
+
+This project simulates on a smaller scale the 2006 Netflix competition, whereby Netflix released a dataset containing 100 million de-identified movie ratings and offered \$1 million to whoever could develop an algorithm that was better than the accuracy of its own recommendation system [@bennett].
+
+# Methods and Analysis
+
+The following R packages were used:
+
+-   `tidyverse` - Used for basic data wrangling and exploration
+
+-   `caret` - Needed to create data partitions used for creating training and test sets
+
+-   `data.table` - Important for preserving computing memory and enhancing processing speed
+
+-   `Matrix` - Used for creating sparse matrix objects that assist with processing speed and memory
+
+-   `irlba` - Used for *singular value decomposition* on sparse matrices
+
+-   `doParallel` - Assists with core parallel processing for processing speed and memory usage
+
+```{r libraries}
+library(tidyverse)
+library(caret)
+library(patchwork)
+library(data.table)
+library(Matrix)
+library(irlba)
+library(doParallel)
+```

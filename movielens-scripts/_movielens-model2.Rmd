@@ -1,0 +1,62 @@
+## Movie & User Effects Model
+
+Since we know that users have a bias in how they rate movies, we will estimate the user bias by adding the term $b_u$ to represent the average rating for user $u$ to our model:
+
+$$
+Y_{u,i} = \mu + b_i + b_u + \varepsilon_{u,i}
+$$ here:
+
+-   $Y_{u,i}$ is the rating given by user $u$ of movie $i$
+-   $\mu$ is the "true" rating for all movies
+-   $b_i$ is the "true" rating for movie $i$
+-   $b_u$ is the "true" rating for user $u$
+-   $\varepsilon_{u,i}$ are independent errors sampled from the same distribution centered at 0
+
+Similar to before, we can estimate the least squares estimate $\hat{b}_u$ by taking the mean of $y_{u,i} - \hat{\mu} - \hat{b}_i$ where $y_{u,i}$ is the rating of movie $i$ from user $u$, $\hat{\mu}$ is the average of all ratings, and $\hat{b}_i$ is the least squares estimate of the movie effect we calculated earlier.
+
+```{r, eval=FALSE}
+user_avgs <- train_set %>% 
+     left_join(movie_avgs, by='movieId') %>%
+     group_by(userId) %>%
+     summarize(b_u_hat = mean(rating - mu_hat - b_i_hat))
+```
+
+To ensure our predicted values are restricted to values between 0.5 and 5, we include a `clamp` function.
+
+```{r, eval = FALSE}
+clamp <- function(x, min = 0.5, max = 5) pmax(pmin(x, max), min)
+
+predicted_ratings <- test_set |> 
+     left_join(movie_avgs, by="movieId") |> 
+     left_join(user_avgs, by="userId") |> 
+     mutate(pred = clamp(mu_hat + b_i_hat + b_u_hat)) %>%
+     pull(pred)
+```
+
+We see that our RMSE has improved even more. We can now estimate within `r round(fit2_rmse, 4)` points users' ratings.
+
+```{r, eval = FALSE}
+fit2_rmse <- RMSE(predicted_ratings, test_set$rating)
+```
+
+```{r}
+fit2_rmse
+```
+
+Although our residuals look better (no outliers), this model still does not address the fact that less popular movies have least squares estimates as high or higher than popular movies. We need a model that could somehow ignore movie averages with a few user ratings and replace those movie averages with the average of all movies. This is the idea behind regularization.
+
+```{r, eval = FALSE}
+fit2_resid <- test_set |> 
+  left_join(movie_avgs, by="movieId") |> 
+  left_join(user_avgs, by="userId") |> 
+  mutate(predicted_ratings = clamp(mu_hat + b_i_hat + b_u_hat),
+         residuals = rating - predicted_ratings)
+
+fit2_resid |> 
+  ggplot(aes(x = predicted_ratings, y = residuals)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Residual Plot for Movie & User Effects Model")
+```
+
+![](images/fit2-residuals.png){width="75%"}

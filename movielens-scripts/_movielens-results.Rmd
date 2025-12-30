@@ -1,0 +1,152 @@
+# Results
+
+To test our final model on the final hold-out test set, we need to calculate the residuals following the removal of the movie and user effects that were estimating using the penalty $\lambda$ term (in this case, $\lambda = 5$). Although these were created in the earlier function, we did not save the residual matrix when running that function. So we need to calculate these steps one final time here.
+
+After the movie and user effects have been removed, we use the `irlba()` function to perform SVD for $k$ singular vectors that were identified in the previous model (in this case, $k = 50$). Then, we use the calculated singular vectors to estimate the predicted residuals according to the SVD formula.
+
+```{r eval=FALSE, include=TRUE}
+b_i <- train_set[, .(b_i = sum(rating - mu_hat)/(.N + lambda_m6)), by = movieId_x]
+
+b_u <- train_set[b_i, on = "movieId_x"][
+  , .(b_u = sum(rating - mu_hat - b_i)/(.N + lambda_m6)), by = userId_x]
+
+train_resid <- train_set
+train_resid[movie_means_reg, b_i := i.b_i, on = "movieId_x"]
+train_resid[user_mean_reg, b_u := i.b_u, on = "userId_x"]
+train_resid[, residual:= rating - mu_hat - b_i - b_u]
+
+y <- sparseMatrix(
+  i = train_resid$userId_x,
+  j = train_resid$movieId_x,
+  x = train_resid$residual
+)
+
+s <- irlba(y, nv = k_m6, nu = k_m6)
+pred_residuals <- s$u %*% diag(s$d) %*% t(s$v)
+```
+
+So far we have only been using the `test_set` partition created at the beginning to test all of our models. As a final step in calculating the accuracy, we use the `final_holdout_test` dataset that has not been used for any of our model training or testing thus far. Since we have not touched this dataset since it was first created, we need to load and process the `final_holdout_test` dataset in the same way that was done on the training dataset previously. Specifically, we need to factorize the movie and user ID variables in the `final_holdout_test` set according to the movie and user ID variables in the `train_set`. This way, we do not run into indexing problems with missing user or movie IDs in the factor levels. In the last step of preprocessing, we set the final test set data frame as a `data.table` object.
+
+```{r eval=FALSE, include=TRUE}
+load(file = "../../9_Capstone/data/final_holdout_test.rds")
+
+user_levels  <- sort(unique(train_set$userId))
+movie_levels <- sort(unique(train_set$movieId))
+
+final_test <- final_holdout_test |> 
+  mutate(userId_x = as.integer(factor(userId)),
+         movieId_x = as.integer(factor(movieId))) |> 
+  mutate(userId_x = match(userId, user_levels),
+         movieId_x = match(movieId, movie_levels))
+
+setDT(final_test)
+```
+
+As before, we extract the predicted residuals using the users' and movies' row and column positions in the final test dataset. Then, we create the vectors of the movie and user effects based on the final test set ID positions. We use the `clamp()` function to save the predicted ratings according to the final formula and we calculate the final RMSE between the predicted and actual final test set ratings.
+
+```{r eval=FALSE, include=TRUE}
+test_residuals <- pred_residuals[cbind(final_test$userId_x, final_test$movieId_x)]
+
+test_b_i <- b_i[.(final_test$movieId_x), b_i, on = "movieId_x"]
+test_b_u <- b_u[.(final_test$userId_x), b_u, on = "userId_x"]
+
+pred <- clamp(mu_hat + test_b_i + test_b_u + test_residuals)
+
+final_rmse <- RMSE(pred, final_test$rating)
+```
+
+Our final RMSE is `r round(final_rmse, 4)`, which means that our predicted ratings were accurate within `r round(final_rmse, 4)` points.
+
+```{r}
+final_rmse
+```
+
+Below is a table comparing all of the models that we have tested in the order they were tested, including which training and data sets were used during algorithm training and testing.
+
+| Model | Training data | Test data | RMSE |
+|--------------------|-----------------|-----------------|------------------|
+| Average (Naive) | `train_set` | `test_set` | `r round(naive_rmse, 4)` |
+| Movie effect | `train_set` | `test_set` | `r round(fit1_rmse, 4)` |
+| Movie + user effects | `train_set` | `test_set` | `r round(fit2_rmse, 4)` |
+| Regularized movie + user effect | `train_set` | `test_set` | `r round(fit3_rmse, 4)` |
+| SVD movie effect | `train_set` | `test_set` | `r round(fit4_rmse, 4)` |
+| SVD movie + user effects | `train_set` | `test_set` | `r round(fit5_rmse, 4)` |
+| Regularized SVD movie + user effects | `train_set` | `test_set` | `r round(fit6_rmse, 4)` |
+| **Final model** | `train_set` | `final_holdout_test` | **`r round(final_rmse, 4)`** |
+
+To better compare the accuracy of each model, below is a plot of each model sorted by RMSE in descending order with a reference line showing where the winning Netflix prize algorithm was by comparison [@bellkor07].
+
+```{r eval=FALSE, include=FALSE}
+rmse_df <- data.frame("Model" = c("Average (Naive)",
+                                  "Movie effect",
+                                  "Movie + user effects",
+                                  "Regularized movie + user effect",
+                                  "SVD movie effect",
+                                  "SVD movie + user effects",
+                                  "Regularized SVD movie + user effects",
+                                  "Final model"),
+                      RMSE = c(naive_rmse,
+                               fit1_rmse,
+                               fit2_rmse,
+                               fit3_rmse,
+                               fit4_rmse,
+                               fit5_rmse,
+                               fit6_rmse,
+                               final_rmse),
+                      test.data = c("edX Test Set",
+                                    "edX Test Set",
+                                    "edX Test Set",
+                                    "edX Test Set",
+                                    "edX Test Set",
+                                    "edX Test Set",
+                                    "edX Test Set",
+                                    "Final Hold-out Test Set")
+                      ) |> 
+  mutate(across(ends_with("rmse"), ~ round(., 4)))
+
+rmse_df |> 
+  ggplot(aes(RMSE, reorder(Model, RMSE))) +
+  geom_col(aes(fill = test.data)) +
+  geom_vline(xintercept = 0.8643,
+             linetype = "dashed",
+             color = "#1F968BFF",
+             linewidth = 1) +
+  geom_label(aes(label = RMSE,
+                 fill = test.data),
+             color = ifelse(rmse_df$test.data == "edX Test Set", "white", "black"),
+             hjust = 1,
+             nudge_x = -0.01,
+             fontface = "bold",
+             linewidth = NA,
+             show.legend = FALSE) +
+  geom_label(data = data.frame(x = 0.8712, 
+                               y = 9,
+                               label = "RMSE = 0.8712\nBell et al.'s (2008) winning algorithm"),
+             aes(x = x, y = y, label = label),
+             nudge_x = -0.1,
+             color = "#1F968BFF",
+             fontface = "bold",
+             linewidth = NA,
+             hjust = 0.5) +
+  labs(y = NULL,
+       x = NULL,
+       fill = NULL,
+       title = "Root Mean Square Error (RMSE) Values of Tested Models on MovieLens Dataset") +
+  scale_fill_manual(values = c("#440154FF", "#FDE725FF")) +
+  expand_limits(y = c(1, 9.5)) +
+  theme_minimal() +
+  theme(legend.position = "top",
+        plot.title.position = "plot")
+```
+
+![](images/final-rmses.png){width="75%"}
+
+# Conclusion
+
+Our goal in this project was to use machine learning to generate predicted movie ratings and to test the accuracy of the selected model using the RMSE metric. In an initial step, we created the main training and final hold-out test datasets, such that the final hold-out test dataset was reserved for the final stage of algorithm testing. After partitioning the main training datset into a training and test dataset, we trained and tested six different models that varied in terms of estimating movie and user effects, as well as optimizing parameters through regularization. After evaluating which model produced the lowest RMSE, the selected model employed a truncated singular value decomposition following the removal of movie and user biases that were calculated from penalized least squares estimates. Once our final model was selected, we used the final hold-out test dataset for testing.
+
+Overall, the regularized SVD movie and user effects model led to the lowest RMSE out of any of the six models. However, the incremental decrease in RMSE gained in the final model was minimal compared to the SVD movie and user effects that did not employ a regularization technique. The only difference between these two models was the fact that the regularized model used a penalty, $\lambda$, term. This suggests, that the least squares estimate is sufficient for estimating systematic movie and user biases. Because the purpose of adding a penalty term is to shrink mean-centered estimates toward 0 on rare items, any estimates on rare movies in the current data were fairly accurate and no overfitting was occurring during model training.
+
+The final algorithm selected in this dataset resulted in an RMSE lower than the winning Netflix prize, which had an RMSE = 0.8712 [@bellkor07]. One year later @bellkor08 released a paper demonstrating a new and improved methodology with an RMSE of 0.8643. The algorithm used by @bellkor08 was trained using a stochastic gradient descent approach with SVD. In addition, @bellkor08 added temporal effects to their model, which predicted a rating at time $t$. They also note that complex models are only one method of improving accuracy. As demonstrated in their 2008, using a blend of simpler models with fewer predictors was a more efficient approach to improving model accuracy. 
+
+Matrix factorization techniques shown in this report are part of methods used in traditional recommendation systems. Newer recommendation systems use artificial intelligence (AI) techniques such as deep neural networks based on large language models. According to @zhang, however, AI-enabled models can vary in terms of accuracy between male and female users. Data scientists interested in developing algorithms for recommendation systems should ensure that training data includes adequate representation of intended users, as well as deciding whether gains in model accuracy are worth the added layers of model complexity.

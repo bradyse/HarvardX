@@ -1,0 +1,15 @@
+---
+title: "HarvardX - Data Science: Capstone"
+author: "Sara E. Brady, Ph.D."
+date: "December 22, 2025"
+---
+
+This website includes the final two projects of the capstone course for the [HarvardX Professional Certificate Program for Data Science](https://www.edx.org/certificates/professional-certificate/harvardx-data-science). Below is a summary of each project.
+
+## 1. [MovieLens Project](movielens.qmd)
+
+The goal of this project is to use the frequently-cited MovieLens dataset and employ machine learning principles to achieve a particular level of accuracy in predicting movie ratings.
+
+## 2. [Nebraska State Legislature](ne-legis.qmd)
+
+The goal of this project is for each student to choose their own dataset and employ machine learning techniques to predict a given outcome. For this project, I identify relevant early childhood legislation introduced in the Nebraska Legislature and use machine learning tasks to predict whether the legislation passes.
