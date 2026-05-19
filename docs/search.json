@@ -25,7 +25,7 @@
     "href": "index.html#nebraska-state-legislature",
     "title": "HarvardX - Data Science: Capstone",
     "section": "2. Nebraska State Legislature",
-    "text": "2. Nebraska State Legislature\nThe goal of this project is for each student to choose their own dataset and employ machine learning techniques to predict a given outcome. For this project, I identify relevant early childhood legislation introduced in the Nebraska Legislature and use machine learning tasks to predict whether the legislation passes."
+    "text": "2. Nebraska State Legislature\nThe goal of this project is for each student to choose their own dataset and employ machine learning techniques to predict a given outcome. For this project, I collected data on all legislative bills introduced in the Nebraska Legislature from 2009 to 2024 and used machine learning tasks to predict whether the legislation passes."
   },
   {
     "objectID": "about.html",
