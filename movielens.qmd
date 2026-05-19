@@ -2,7 +2,7 @@
 title: "Capstone MovieLens Project"
 subtitle: "HarvardX Data Science Professional Certificate"
 author: "Sara E. Brady, Ph.D."
-date: "`r Sys.Date()`"
+date: "December 30, 2025"
 bibliography: movielens-scripts/movielens-references.bib
 csl: movielens-scripts/apa.csl
 ---
