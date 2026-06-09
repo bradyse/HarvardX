@@ -458,22 +458,22 @@ tuning_grids <- list(
 # NOTE THE CODE BELOW TAKES ABOUT 20 MINUTES TO RUN. IF YOU DO NOT WANT TO WAIT
 # THAT LONG,YOU CAN DOWNLOAD THE MODELS DATA OBJECT USING THIS CODE:
 #
-models_url <- "https://raw.githubusercontent.com/bradyse/HarvardX/main/personal-submission-files/leg_models.rds"
-models_data <- "leg_models.rds"
-if(!file.exists(models_data))
-  download.file(models_url, models_data, method = "curl", mode = "wb")
-models <- readRDS(file = "leg_models.rds")
+# models_url <- "https://raw.githubusercontent.com/bradyse/HarvardX/main/personal-submission-files/leg_models.rds"
+# models_data <- "leg_models.rds"
+# if(!file.exists(models_data))
+#   download.file(models_url, models_data, method = "curl", mode = "wb")
+# models <- readRDS(file = "leg_models.rds")
 
-# set.seed(2013)
-# t1 <- Sys.time()
-# models <- caretList(Passed.All ~ .,
-#                     methodList = c("glm"),
-#                     data = train_set,
-#                     trControl = train_control,
-#                     tuneList = tuning_grids)
-# t2 <- Sys.time()
-# 
-# t2 - t1
+set.seed(2013)
+t1 <- Sys.time()
+models <- caretList(Passed.All ~ .,
+                    methodList = c("glm"),
+                    data = train_set,
+                    trControl = train_control,
+                    tuneList = tuning_grids)
+t2 <- Sys.time()
+
+t2 - t1
 
 ### ---- Training model comparison ---------------------------------------------
 all_models_results <- resamples(models)
