@@ -1,0 +1,925 @@
+---
+title: "Predicting Passage of Nebraska Legislative Bills"
+subtitle: "Capstone for HarvardX Data Science Professional Certificate"
+author: "Sara E. Brady, Ph.D."
+date: "`r Sys.Date()`"
+bibliography: references.bib
+csl: apa.csl
+header-includes:
+  - \usepackage{pdflscape}
+  - \usepackage{caption}
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      knitr.table.format = "latex",
+                      tidy = TRUE, tidy.opts = list(width.cutoff = 60))
+
+library(tidyverse)
+library(caret)
+library(caretEnsemble)
+library(pROC)
+library(kableExtra)
+library(networkD3)
+library(ggrepel)
+
+options(scipen = 999)
+
+leg_labels <- read_rds("../9_Capstone_Personal/data/leg_labels.rds")
+```
+
+\newpage
+
+# Executive Summary
+
+During its recent 109th legislative session, the Nebraska Legislature introduced 1,262 bills. Of those bills, only 361 (28.6\%) became state laws [@leg-109wksht]. As legislative bills are introduced and move their way through the lawmaking process, it may be useful to know which bills have a higher chance of passing. A bill's characteristics could include if a bill was carried over from a previous legislative session or whether the bill is a priority bill. 
+
+The purpose of this project was to collect data on legislative bills introduced from 2007 through 2024 and evaluate several machine learning algorithms in predicting the passage of a Nebraska legislative bill. For this project, the outcome variable was whether or not a bill was passed into law, which included bills that passed, as well as bills that were amended into package bills.
+
+Information on 11,584 legislative bills introduced in the Nebraska Legislature from 2007 to 2024 were webscraped from the Nebraska Legislature's website. Using a training data set of 7,372 bills, model evaluation was conducted via repeated 10-fold cross-validation across three iterations for five commonly used classification models: generalized linear model, LASSO regression, random forest, decision tree, and k-nearest neighbor. After comparing the predictive accuracy of the models on a test data (*N* = 2,457), the generalized linear model and LASSO regression demonstrated the highest accuracy. 
+
+Since there were no significant differences between these two model, the simpler generalized linear model was selected for testing on an independent test data set of 1,587 bills. The final generalized linear model correctly predicted outcomes for 90.4\% of bills with exceptionally high discrimination in predicting the outcome of a bill. Based on variable importance metrics, the strongest predictors included whether the bill was a package bill (or amended into a package bill), was placed on General File, was not a carryover bill, and was introduced in the first regular session.
+
+This project has the potential to impact the lawmaking process in Nebraska and provide policymakers, advocates, and communities with basic indicators on how to strategize legislative priorities. This project could be improved by including the political affiliation of bill introducers, as well as identifying novel approaches for gathering important bill information such as fiscal impact. In the future, policy researchers should consider adding future legislative bills to this data set so that training data may be expanded and refined.
+
+
+# Introduction
+
+## Nebraska Unicameral
+Nebraska is the only state in the United States whose state government does not include two legislative chambers. As a unicameral legislature, the Nebraska Legislature consists of 49 senators, each representing legislative districts containing about 40,000 citizens [@leg-unicam]. Convening at the start of January of each year, the Nebraska Legislature governs within a biennium, which is a two-year cycle whereby the first session meets for 90 days in odd-numbered years and the second session meets for 60 days in even-numbered years. The Governor may also convene the Nebraska Legislature for a special session, which occurs during the interim period in the summer or fall.
+
+## Process of Lawmaking
+All legislative bills must be introduced within the first 10 days of either the first or second session of each biennium [@leg-law]. Once a bill is introduced, it is referred to a committee where all bills must have a public hearing. If a committee decides to advance a bill, it will be placed on General File, whereby the Speaker will decide to place the bill on the agenda for the first round of debate. From there, a bill can be voted to advance to Select File (second round of debate), and then on to Final Reading (third round of debate).
+
+If the Legislature passes the bill at Final Reading, the bill is sent to the Governor who can either veto or sign the bill into law. Occasionally, if the Governor declines to sign a bill, the bill automatically becomes state law. Legislative bills introduced within the first regular session that do not become law are carried over to the second legislative session within the biennium. If these carryover bills are not signed into law before the conclusion of the second legislative session, they are indefinitely postponed and must be introduced again at the beginning of the next biennium, thus, starting the process all over again. 
+
+## Legislative Journal Chronology
+Historical information on all legislative bills introduced in the Nebraska Legislature are available on its website, [nebraskalegislature.gov](https://nebraskalegislature.gov/). To date, the most recent journal chronology posted to the Legislature's website is from 2025, which was the [first regular session of the 109th Legislature](https://nebraskalegislature.gov/FloorDocs/109/PDF/Journal/r1chronology.pdf)  [@leg109]. Researchers can use these archived documents for determining the history of a legislative bill, including but not limited to date of introduction, who introduced the bill (i.e., senator, speaker, or committee), when the bill was placed on General File, Select File, or Final Reading, when the bill was signed into law or returned without the governor's approval (i.e., vetoed).
+
+## Current Project
+
+Given that Nebraska's journal chronologies provide substantive information about the history of all legislative bills introduced within a session, the purpose of the current project was to (1) create a data set that summarizes Nebraska legislative bill information over a certain time frame and (2) use that data set to predict the passing rates of bills introduced during a legislative session. To build the data set, text scraping methods were used to scrape journal chronology information from PDF documents posted to the Nebraska Legislature's website. The final data set included 11,584 legislative bills and was built from the journal chronologies of 2007 (100th Legislature) through 2024 (108th Legislature). To predict Nebraska bill passing rates, machine learning algorithms were trained, tested, and evaluated for accuracy and interpretability. To prevent overfitting the data, the full data set was first partitioned into a larger training set and a holdout test set. The larger training set encompassed legislative bills introduced between 2007 and 2022 (*n* = 9,833). At the time of this writing, the full journal chronology of the 109th Legislature was not available. Therefore, the final holdout test set included legislative bills introduced during the 108th Legislature (2023-2024; *n* = 1,587). Using other cross-validation techniques, the larger training set was used for determining the final model. Once the final model was chosen, the chosen machine learning algorithm was tested on the holdout test set.
+
+# Methodology
+
+## Data Collection
+
+Using R's `pdftools` package, the full data set (*N* = 11,584) was scraped from the PDFs of journal chronologies that spanned the years 2007 to 2024. Journal chronologies are provided annually and designated as either being part of a regular or special session. For each legislative session, there are two regular sessions. If a special session was convened, those journal chronologies were also scraped. From the journal chronologies, the following variables were collected for each bill (see Table 1).
+
+```{r tab1, echo=FALSE}
+tribble(~Variable,                ~Type,        ~Description,
+        "Legislature",            "String",     "Which legislative session the bill was introduced in",
+        "Special Session",        "Logical",    "If bill was introduced during a special session",
+        "Bill Number",            "Integer",    "Unique identifer of the bill",
+        "Introducer",             "String",     "Senator or committee that introduced the bill",
+        "Date of Introduction",   "String",     "Date bill was introduced",
+        "Amended Into Other Bill","Logical",    "If provisions of bill was amended into another bill",
+        "Committee",              "String",     "Committee the bill was referred or rereferred to",
+        "Bill Withdrawn",         "Logical",    "If bill was withdrawn",
+        "Carryover Bill",         "Logical",    "If bill was a carryover bill from the first regular session of biennium",
+        "Priority Bill",          "Logical",    "If bill is a priority bill",
+        "Priority Owner",         "String",     "If bill is a priority bill, which committee or senator declared it as a priority bill",
+        "A Bill",                 "Logical",    "If bill is categorized as an appropriation bill (A Bill)",
+        "Has A Bill",             "Logical",    "If bill has a corresponding A Bill",
+        "Placed on General File", "Logical",    "If bill was placed on General File",
+        "Enrollment and Review Initial", "Logical", "If bill was advanced for Enrollment and Review Initial",
+        "Placed on Select File",  "Logical",    "If bill was placed on Select File",
+        "Enrollment and Review Engrossment", "Logical", "If bill was advanced for Enrollment and Review Engrossment",
+        "Placed on Final Reading","Logical",    "If bill was placed on Final Reading",
+        "Passed Over",            "Logical",    "If bill was passed over during debate",
+        "Failed on Final Reading","Logical",    "If bill failed to advance on Final Reading",
+        "Approved by Governor",   "Logical",    "If bill was approved by the governor",
+        "Became Law Without Governor", "Logical", "If bill became law without the governor's signature",
+        "Vetoed",                  "Logical",   "If bill was returned to the Legislature without the governor's approval",
+        "Veto Override",           "Logical",   "If bill was passed by the Legislature notwithstanding objections of the governor",
+        "Indefinitely Postponed",  "Logical",   "If bill was indefinitely postponed") |> 
+  kbl(caption = "Legislative Bill Variables Collected from Journal Chronologies",
+      booktabs = TRUE,
+      longtable = TRUE) |> 
+  kable_styling(latex_options = c("repeat_header", "hold_position")) |> 
+  column_spec(1, width = "5cm") |> 
+  column_spec(2, width = "1.75cm") |> 
+  column_spec(3, width = "8cm")
+
+```
+
+During and after the scraping process, validation checks were made to confirm the accuracy of the data. If errors during the scraping process were detected, updates to the pdf scraping functions were made. Errors detected in the journal chronologies were verified against the full journal records listed on the Legislature's website. After all legislative sessions were merged into one data frame, several additional variables were calculated (see Table 2). 
+
+
+```{r tab2, echo=FALSE}
+tribble(~`Calculated Variable`,   ~Type,        ~Description,
+        "Passed",                 "Logical",    "If bill was approved by the governor, became law without the governor's signature, or was passed by the Legislature after being vetoed by the governor",
+        "Passed (All Bills)", "Logical", "If a bill or provisions of a bill amended into a package bill passed",
+        "Number of Bills Amended", "Integer", "The number of other bills that were amended into a bill",
+        "Package Bill",           "Logical",  "If bill is a package bill (i.e., a bill has at least one other bill amended into it",
+        "Package Bill Category",  "String",  "Whether a bill is a package bill (multiple bills amended into it), amended into a package bill (provisions of bill amended into another bill, also called a \"rider\" bill), or a standalone bill (not a package bill or a rider bill)",
+        "Introducer Type",        "String",   "Whether bill was introduced by a senator, committee, or speaker",
+        "Term Limit",             "Logical",  "If bill was introduced by a term-limited senator") |> 
+  kbl(caption = "Calculated Variables from Journal Chronology Data",
+      booktabs = TRUE) |> 
+  kable_styling(latex_options = c("repeat_header", "hold_position")) |> 
+  column_spec(1, width = "5cm") |> 
+  column_spec(2, width = "1.75cm") |> 
+  column_spec(3, width = "8cm")
+```  
+
+Two variables, introducer type and term limit, were calculated based upon senator characteristics that were merged from a separate data frame. Because senator rosters are not archived for each legislative session separately, senator information was scraped from legislative update archives posted to the Nebraska's Legislature's official news site, [*Unicameral Update*](https://update.legislature.ne.gov/) [@leg-update]. PDFs of archives dating back to 2004 were scraped for all current senator's last names, as well as the speaker for each legislative session. Unique name identifiers were assigned to all senators to accommodate senators with the same last names and senators who changed their names between sessions. To determine if a senator was term limited in a given year, the number of consecutive years that they appeared in the data set was calculated. State senators can only serve for two consecutive legislative sessions (i.e., four consecutive years). Therefore, term-limited senators were identified if they appeared in the data set for four consecutive years. Only state senators who were appointed to replace a former senator appeared in the data set for five consecutive years. To verify that these five consecutive years were not data collection errors, senator appointments were confirmed through their public profiles on [ballotpedia.org](https://ballotpedia.org/).
+
+## Final data set
+
+The final data set included 11,584 legislative bills and appropriation (A) bills introduced between 2007 and 2024 and included 47 variables. To visualize the the flow of legislative bills once they were introduced, a Sankey plot was created using the networkD3 package in R (see Figure 1). As shown in Figure 1, only 30.1\% of bills passed (i.e., became law). Although 64.5\% of bills placed on General File passed, the passing rates for bills placed on Select File (93.8\%) and Final Reading (97.7\%) were much higher. This suggests that once a bill advances from General File it is highly likely to pass. The Sankey plot does not visualize the number of bills that were amended into bills that became law. For the purpose of this analysis, the main outcome variable is the ***passing rate of all bills, including bills amended into other bills.*** To determine which variables were most correlated with a bill passing, further exploratory data analysis was conducted.
+
+## Bill Outcome per Session
+
+When examining bill outcome by legislative session, the number of total bills introduced increased but the pass rate  decreased over time (see Figure 2). For example, during the 2007-2008 legislative session 31.5\% of 1,268 bills passed. However, during 2023-2024 only 15.9\% of 1,606 bills passed. This trend is likely due to the fact that more bills were being amended into package bills over time. 
+
+A package bill is a bill that contains multiple \"rider\" bills. Package bills (also sometimes called a \"Christmas tree\" bill) are constructed for expediency when bills amended into package bills (rider bills) pertain to a related topic. If a package bill passes, only the package bill's legislative bill number is signed into law. A rider bill's number is, then, indefinitely postponed However, for policymakers and advocates of rider bills, the passage of a package bill is considered a legislative win for their particular rider bill. Although rider bills are indefinitely postponed, some or all of their provisions are passed into law through package bills. Therefore, expanding the definition of a bill passing should also include rider bills.
+
+\newpage
+\begin{landscape}
+
+```{r fig1-sankey, echo=FALSE, fig.width=10, fig.height=5.75, out.width="100%", fig.align='center'}
+
+knitr::include_graphics("./outputs/legis-sankey.png")
+
+```
+
+\captionof{figure}{Pathway of All Bills Introduced in the Nebraska Legislature from 2007 to 2024 (\textit{N} = 11,584)}
+
+\vspace{0.2cm}
+
+\footnotesize {\textit{Note}. All introduced bills are referred to a committee with the exception of appropriation (A) bills and some special session bills. Once a bill is voted out of committee, it is placed on General File (the first round of debate), where it can be voted to advance to Select File (the second round of debate). If a bill is voted to advance to Final Reading (the third round of debate), it can either fail on final reading or be voted to be presented to the Governor. If the Governor approves the bill, the bill becomes law. Rarely, the Governor can veto a bill and, then, the Legislature overrules the veto and the bill becomes law. Or, the bill can remain unsigned by the Governor and, then, it automatically becomes law.}
+
+\end{landscape}
+\newpage
+
+
+```{r fig2, echo=FALSE, fig.width=6, fig.cap="Number of Bills per Legislative Session by Bill Outcome"}
+bills_by_outcome_per_session <- leg_labels |> 
+  group_by(Leg.Years, Bill.Outcome) |> 
+  count()
+
+bills_by_outcome_per_session |> 
+  ggplot(aes(y = fct_rev(Leg.Years), x = n, fill = str_wrap(Bill.Outcome, 20))) +
+  geom_col() +
+  geom_text(aes(x = n, y = Leg.Years, 
+                label = if_else(n > 100, format(n, big.mark = ","),"")),
+            position = position_stack(vjust = 0.5),
+            size = 4,
+            fontface = "bold",
+            color = "white") +
+  labs(x = NULL,
+       y = NULL,
+       fill = NULL,
+       title = "") +
+  theme_minimal() +
+  theme(axis.text = element_text(face = "bold", size = 9),
+        legend.text = element_text(size = 9),
+        legend.position = "top",
+        legend.location = "plot") +
+  scale_fill_brewer(palette = "Paired") 
+```
+
+## Pass Rates for All Bills
+
+When expanding the definition of passing to include standalone bills, package bills, and rider bills, the passing rates ranged from 39-51\% and remained relatively similar over time. Standalone bills, moreover, had a much lower passing rate (33\%) than package bills (97\%) or bills that were amended into package bills (98\%; see Table 3).
+
+```{r tab3, echo=FALSE}
+build_all_bills_pass_rate_df <- function(var){
+  leg_labels |> 
+    group_by(.data[[var]]) |> 
+    count(Passed.All.Bills) |> 
+    mutate(`Percentage of Passed Bills` = round(n/sum(n)*100, 0)) |> 
+    filter(str_detect(Passed.All.Bills, "Passed")) |>
+    select(-c(Passed.All.Bills, n)) |>
+    rename(Variable = 1) |>
+    ungroup() |>
+    mutate(Variable = str_replace(Variable, "\n", " "))
+}
+
+pass_rate_df_3 <- build_all_bills_pass_rate_df("Leg.Years") |> 
+  rbind(build_all_bills_pass_rate_df("Introduced.Biennium")) |> 
+  rbind(build_all_bills_pass_rate_df("Introducer.Type")) |> 
+  rbind(build_all_bills_pass_rate_df("IsAmendedIntoPackageBill")) |> 
+  rbind(build_all_bills_pass_rate_df("IsPackageBill")) |> 
+  rbind(build_all_bills_pass_rate_df("Bill.Package.Category")) |> 
+  rbind(build_all_bills_pass_rate_df("IsCarryoverBill")) |> 
+  rbind(build_all_bills_pass_rate_df("IsPriority")) |> 
+  rbind(build_all_bills_pass_rate_df("Priority.Owner")) |> 
+  rbind(build_all_bills_pass_rate_df("Is.Term.Limit")) |> 
+  rbind(build_all_bills_pass_rate_df("IsABill")) |> 
+  rbind(build_all_bills_pass_rate_df("HasABill")) |> 
+  rbind(build_all_bills_pass_rate_df("AmendedInto.HasABill")) |> 
+  rbind(build_all_bills_pass_rate_df("AmendedInto.Passed"))
+
+kbl(pass_rate_df_3,
+    caption = "Pass Rates for All Bills (Including Bills Amended Into Package Bills)",
+    booktabs = TRUE,
+    longtable = TRUE,
+    col.names = c("Variable", "Percentage of Passed Bills")) |>
+  kable_styling(latex_options = c("repeat_header", "hold_position")) |> 
+  pack_rows(index = c("Legislative Years" = 9, 
+                      "Introduced Biennium" = 3,
+                      "Introducer Category" = 3,
+                      "Amended Into Package Bill" = 2,
+                      "Package Bill" = 2,
+                      "Package Bill Category" = 3,
+                      "Carryover Bill" = 2,
+                      "Priority Bill" = 2,
+                      "Priority Owner" = 4,
+                      "Introduced by Term-Limited Senator" = 2,
+                      "A-Bill" = 2,
+                      "Has A-Bill" = 2,
+                      "Amended-Into Bill (Provisions) Has an A Bill" = 2,
+                      "Amended-Into Bill (Provisions) was Passed" = 2
+  ))
+```
+
+Continuous variables that were included in the main data set include the the legislative session (i.e., 100, 101, etc.), the number of names added to a bill, and the number of bills amended into a package bill. Because there were a sizable proportion of bills with zero names added, Figure 3 shows the distribution of the number of names added per bill for only bills with at least one name added by legislative session. Figure 4 shows the distribution of the number bills amended into package bills per legislative session.
+
+```{r fig3-cont-plot, echo=FALSE, fig.height=4, fig.cap="Frequency of Names Added to Introduced Bills with at Least One Name Added"}
+leg_names <- leg_labels |> 
+  select(Leg.Years, LB, Num.NameAdded) 
+
+leg_names |> 
+  filter(Num.NameAdded > 0) |> 
+  ggplot(aes(y = fct_rev(Leg.Years), x = Num.NameAdded)) +
+  geom_boxplot() +
+  geom_jitter(width = 0, height = 0.2, alpha = 0.3) +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text = element_text(face = "bold", size = 9),
+        legend.text = element_text(size = 9))
+```
+
+```{r fig4-cont-plot, echo=FALSE, fig.height=4, fig.cap="Number of Bills Amended Into Package Bills"}
+leg_packages <- leg_labels |> 
+  filter(IsPackageBill == "Is a Package Bill") |> 
+  select(Leg.Years, LB, Number.Bills.in.Package) 
+
+leg_packages |> 
+  ggplot(aes(y = fct_rev(Leg.Years), x = Number.Bills.in.Package)) +
+  geom_boxplot() +
+  geom_jitter(width = 0, height = 0.2, alpha = 0.3) +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text = element_text(face = "bold", size = 9),
+        legend.text = element_text(size = 9))
+```
+
+The distribution of bills that passed vs. bills that did not pass was similar for the number of names added to a bill (Figure 5), as well as the number of bills amended into package bills (Figure 6). Given that the number of bills amended into package bills only applies to package bills, this variable was not considered for inclusion in the main training data set.
+
+```{r fig5-names-added-pass, echo=FALSE, fig.height=2, fig.cap="Pass Rate Distribution of the Number of Names Added to a Bill"}
+leg_labels |> 
+  filter(Num.NameAdded > 0) |> 
+  ggplot(aes(Num.NameAdded, fill = str_wrap(Passed, 70))) +
+  geom_histogram(binwidth = 1) +
+  labs(x = NULL,
+       fill = NULL) +
+    theme_minimal() +
+    theme(legend.position = "top",
+          axis.text = element_text(face = "bold", size = 9),
+          legend.text = element_text(size = 9)) +
+    scale_fill_brewer(palette = "Paired")
+```
+
+\footnotesize\textit{Note}. Excludes bills with zero names added.
+\normalsize
+$\\$
+
+
+```{r fig6-bills-amended-pass, echo=FALSE, fig.height=2, fig.cap="Pass Rate Distribution of Number of Bills Amended into Package Bills"}
+leg_labels |> 
+  filter(Number.Bills.in.Package > 0) |> 
+  ggplot(aes(Number.Bills.in.Package, fill = str_wrap(Passed, 70))) +
+  geom_histogram(binwidth = 1) +
+  labs(x = NULL,
+       fill = NULL) +
+    theme_minimal() +
+    theme(legend.position = "top",
+          axis.text = element_text(face = "bold", size = 9),
+          legend.text = element_text(size = 9)) +
+    scale_fill_brewer(palette = "Paired")
+```
+
+\footnotesize\textit{Note}. Excludes bills that are not package bills.
+\normalsize
+
+# Training and Testing Data Sets
+
+Due to sample size, 114 bills that were withdrawn were excluded from the final data set. Based on exploratory data analysis, 11 predictors were selected for inclusion in the final training models. These predictors were selected because they were not overly predictive of the outcome variable. Inclusion of highly correlated predictors can potentially lead to overfitting, decreasing the model's ability to correctly predict new data. The variables selected for model testing are shown in Table 4. 
+
+```{r tab4, echo=FALSE}
+tribble(~Variable, ~Type, ~Description,
+        "Passed (All Bills)", "Binary outcome", "If a bill or provisions of a bill became law",
+        "Legislature", "Integer predictor", "Legislative session (e.g., 100, 101, 102)",
+        "Carryover Bill", "Binary predictor", "If a bill was carried over from the first to second regular session",
+        "Term Limit", "Binary predictor", "If a bill was introduced by a term-limited senator",
+        "Has A Bill", "Binary predictor", "If a bill had a corresponding A bill",
+        "General File", "Binary predictor", "If a bill was placed on General File",
+        "Biennium Session", "Categorical predictor", "Whether bill was introduced in first regular, second regular, or special session",
+        "Introducer Type", "Categorical predictor", "Whether bill was introduced by a senator, speaker, or committee",
+        "Bill Package Category", "Categorical predictor", "Whether bill was a standalone bill, a package bill, or amended into a package bill",
+        "Priority Owner", "Categorical predictor", "Whether bill was a priority bill of the speaker, a committee, a senator, or not a priority bill",
+        "Committee", "Categorical predictor", "Which committee the bill was referred or rereferred to (18 categories)",
+        "Number of Names Added", "Integer predictor", "Number of names added to a bill (ranges from 0 to 44)"
+) |> 
+  kbl(caption = "Legislative Variables Selected for Model Testing",
+      booktabs = TRUE,
+      latex_options = c("repeat_header", "hold_position")) |> 
+  column_spec(1, width = "3cm") |> 
+  column_spec(2, width = "3cm") |> 
+  column_spec(3, width = "8.25cm")
+```
+
+
+To ensure that no data leakage occurs during the machine learning training phase, the final data set was partitioned into a main data set that included the 100th through 107th legislative sessions (*n* = 9,883) and a final holdout data set that included the 108th legislative session (*n* = 1,587). 
+
+```{r final-train-test-sets}
+leg_final <- leg_labels |> 
+  filter(Bill.Withdrawn != "Bill Withdrawn") |>
+  mutate(across(where(is.character), ~factor(.))) |> 
+  select(Passed.All, IsCarryoverBill, Is.Term.Limit, HasABill, Placed.GenFile,
+         Introduced.Biennium, Introducer.Type, Bill.Package.Category,
+         Priority.Owner, Committee, Leg, Num.NameAdded)
+
+leg_main <- leg_final |> 
+  filter(Leg != 108)
+
+leg_final_test <- leg_final |> 
+  filter(Leg == 108)
+```
+
+# Preprocessing
+
+## Dummy Coding
+
+Before training the machine learning algorithms, the main data set was preprocessed to transform all predictors into dummy variables using the `caret` package. Binary variables were transformed into 0 and 1 values, whereas categorical variables were transformed into $k - 1$ dummy variables with 0 and 1 values. Dummy coding is necessary for distance-based machine learning algorithms that require numeric data, such as $k$ nearest neighbor.
+
+```{r preproc1-dummy}
+predictors <- select(leg_main, -Passed.All)
+dummies <- dummyVars(~ ., data = predictors, fullRank = TRUE)
+leg_dummy <- data.frame(predict(dummies, newdata = predictors))
+
+leg_dummy$Passed.All <- leg_main$Passed.All
+str(leg_dummy, width = 70,strict.width = "wrap")
+
+```
+
+## Near Zero Variance
+
+To determine whether any predictors have one or very few unique values, caret's `nearZeroVar()` function was used to identify predictors that contained highly unbalanced data. The `freqRatio` column compares the most prevalent value over the second most frequent value.
+
+```{r preproc1-nzv}
+nzv <- nearZeroVar(leg_dummy, saveMetrics = TRUE)
+nzv[,][nzv$nzv,]
+```
+
+## Recoding Infrequent Subcategories
+
+Based upon this analysis, bills introduced during the special session, as well as bills referred to certain committees have near zero variance. Bills without a committee assignment are only introduced during a special session. Similarly, the Redistricting Committee is not a standing committee and typically only convenes during special sessions. Therefore, special session bills, bills referred to the Redistricting Committee, and bills without a committee assignment were excluded. 
+
+To avoid excluding other bills from analysis, the Committee predictor was recategorized such that committees with fewer bills were combined into one level "Other". Similarly, Introducer Type was recategorized into two levels: "Senator" and "Committee or Speaker". Bill Package was categorized into two levels: "Standalone Bill" or "Package Bill or Provisions Amended". Priority Owner was recategorized into two levels: "Is a Priority Bill" or "Not a Priority Bill". 
+
+```{r preproc1-recode}
+leg_main_final <- leg_main |> 
+  filter(Introduced.Biennium != "Special",
+         Committee != "Redistricting",
+         Committee != "None") |> 
+  mutate(Cmte = factor(case_when(Committee == "Business and Labor" ~ "Other",
+                                 Committee == "Executive Board" ~ "Other",
+                                 Committee == "General Affairs" ~ "Other",
+                                 Committee == "Natural Resources" ~ "Other",
+                                 Committee == "Nebraska Retirement Systems" ~ "Other",
+                                 Committee == "Urban Affairs" ~ "Other",
+                                 TRUE ~ Committee)),
+         Introducer = factor(if_else(
+           Introducer.Type == "Senator", "Senator", "Committee or Speaker")),
+         Is.Standalone = factor(if_else(Bill.Package.Category == "Standalone Bill", "Standalone Bill", "Package Bill or Provisions Amended")),
+         Is.Priority = factor(if_else(Priority.Owner == "Is Not a Priority Bill", "Not a Priority Bill", "Is a Priority Bill")))|> 
+  select(-c(Committee, Introducer.Type, Bill.Package.Category, Priority.Owner)) |> 
+  mutate(across(where(is.factor), ~fct_drop(.)))
+```
+
+## Dummy Coding following Subcategory Recode
+
+The preprocessing procedure for creating a complete set of dummy variables was performed on the final main data set. In the data, $Y$ is `Passed.All`, which is a factor of 1 (bill passed) and 2 (bill did not pass). `Passed.All` includes all bills that passed, including rider bills that were amended into package bills, as well as standalone bills and package bills that passed.
+
+```{r preproc2-dummy}
+predictors <- select(leg_main_final, -Passed.All)
+dummies <- dummyVars(~ ., data = predictors, fullRank = TRUE)
+leg_dummy <- data.frame(predict(dummies, newdata = predictors))
+
+leg_dummy$Passed.All <- leg_main_final$Passed.All
+
+str(leg_dummy, width = 70, strict.width = "wrap")
+```
+
+## Near-Zero Variance
+
+After recoding existing predictors and removing special session predictors, only Introducer continued to show near zero variance levels, such that senator bills were 20 times more frequent than bills introduced by the Speaker or a committee. 
+
+```{r preproc2-nzv}
+nzv <- nearZeroVar(leg_dummy, saveMetrics = TRUE)
+nzv[,][nzv$nzv,]
+```
+
+## High Correlations
+
+To identify whether any of the predictors were highly correlated with each other, a correlation matrix was constructed. Using caret's `findCorrelation()` function, predictors that were strongly correlated ($r = 0.75$) were flagged. Based upon this cutoff, no predictors were highly correlated with each other.
+
+```{r preproc2-cor}
+data_cor <- cor(leg_dummy |> 
+                  mutate(Passed.All = if_else(Passed.All == "Yes", 1, 0))
+)
+findCorrelation(data_cor, cutoff = 0.75)
+```
+
+## Linear Combinations
+
+Similar to the `findCorrelation()` function, caret's `findLinearCombos()` function identifies sets of linear combinations among all variables and returns a list of these combinations. For each combination, the function will incrementally remove them from the data to see if the dependencies have been resolved. As shown below, no problematic combinations were identified and no predictors were removed.
+
+```{r preproc2-combo}
+comboInfo <- findLinearCombos(leg_dummy |> 
+                                mutate(Passed.All = if_else(Passed.All == "Yes", 1, 0))
+)
+
+comboInfo
+
+```
+
+## Final Preprocessed Data Set
+
+In the final preprocessing step, the data set was transformed on the dummy-coded main data set using caret's `preProcess()` function, which estimates the requirements to preprocess a data set according to the methods specified. Then, the `predict()` function is used to preprocess the data according to the preprocess requirements. 
+
+In order to remove the near-zero variance predictor (i.e., Introducer), as well as scale and center the two numeric variables (legislative session and number of names added), all binary dummy-coded variables were transformed into factors so that these variables would be ignored by the `preProcess()` function.
+
+
+```{r preproc2-transform}
+leg_dummy <- leg_dummy |> 
+  mutate(across(1:5, ~factor(.)),
+         across(8:20, ~factor(.))) 
+
+leg_preproc <- preProcess(leg_dummy, method = c("scale", "center", "nzv"))
+leg_preproc
+
+leg_transf <- predict(leg_preproc, leg_dummy)
+```
+
+# Training
+
+The final transformed main data set was partitioned into 75% training data (*n* = 7,372) and 25% of the data was reserved for testing (*n* = 2,457). This partition was used because cross-validation resampling techniques require sufficient sample size for each resample (fold). If a 10-fold resample is used during training on the training data set, then at least 700 cases would be used for each fold.
+
+```{r partition}
+y <- leg_transf$Passed.All
+
+set.seed(2013)
+index <- createDataPartition(y, times = 1, p = 0.75, list = FALSE)
+train_set <- leg_transf[index,]
+test_set <- leg_transf[-index,]
+```
+
+## Resampling Method
+
+To control the resampling techniques, caret's `trainControl()` function was used to assign the training model a repeated cross-validation method with three repeats to avoid lengthy computation time. Because the outcome variable is binary, class probabilities were computed in each resample, as well as two-class performance metric summary across all resamples. The argument `number` is set to the default value 10, which is the number of folds used in cross validation. As mentioned earlier, this number provides sufficient sample size for each subsample. 
+
+```{r resamp}
+train_control <- trainControl(method = "repeatedcv",
+                              repeats = 3,
+                              classProbs = TRUE,
+                              summaryFunction = twoClassSummary)
+```
+
+## Testing Multiple Models
+
+In selecting various algorithms to use for training, the following algorithms were chosen for comparison:
+
+-   Generalized linear model (glm)
+
+-   Ridge regression (glmnet)
+
+-   Least absolute shrinkage and selection operator (LASSO) regression (glmnet)
+
+-   Random forest (rf)
+
+-   Decision tree (rpart)
+
+-   *k*-nearest neighbors (knn)
+
+Because the outcome is binary, using a logistic regression (glm) is the most basic approach. An extension of logistic regression is either ridge regression or LASSO regression (both from the `glmnet` package), because both models use linear regression, and in the case of logistic regression, both models add a penalty term to the log likelihood function. Each models' penalty functions have different effects on the coefficients. Ridge regression minimizes the effect of coefficients that contribute the most to the error term, whereas LASSO regression sets these coefficients to zero, thus, effectively selecting only the most relevant predictors. However, other models work well with classification data, including random forest, decision tree models, and k-nearest neighbor. These models were also included for comparison.
+
+To compare multiple machine learning algorithms at once, caret includes a `caretList()` function that allows multiple algorithms to be passed in its `methodList` or `tuning_grids` arguments. 
+
+```{r multi-train-models-lookup}
+algorithms <- c("knn", "glm", "glmnet", "rf", "rpart")
+
+lapply(algorithms, modelLookup) |> bind_rows()
+```
+
+Using caret's `modelLookup()` function, GLM does not have any tuning parameters. However, `knn` requires parameter *k*, and `glmnet` requires parameters $\alpha$ (for identifying ridge or LASSO regression) and $\lambda$ (for regularization). The random forest model, `rf`, will randomly select `mtry` variables from the set of predictors available, and the decision tree model, whereas `rpart` uses the complexity parameter `cp`. 
+
+Based upon these parameters, the `tuning_grids` object was created, which identifies each of the tuning parameters for the four models that require them. For k-nearest neighbor and random forest models, the tuning parameters were chosen based on the number of predictors in the entire data set ($p = 20$). For ridge and LASSO regression, alpha was set to either 0 or 1 and the regularization parameter $\lambda$ was set to 10 values close to zero.
+
+```{r multi-train-models-tune}
+tuning_grids <- list(
+  knn = caretModelSpec(
+    method = "knn",
+    tuneGrid = data.frame(k = seq(3, 21, 2))),
+  glmnet = caretModelSpec(
+    method = "glmnet",
+    tuneGrid = expand.grid(
+      alpha = 0:1,
+      lambda = seq(0.0001, 0.1, length = 10))),
+  rf = caretModelSpec(
+    method = "rf",
+    tuneGrid = data.frame(mtry = ceiling(seq(2, 19, length = 10)))),
+  rpart = caretModelSpec(
+    method = "rpart",
+    tuneGrid = data.frame(cp = seq(0, 0.05, len = 10))
+  )
+)
+```
+
+Prior to running the algorithms, the seed was set and a time marker was stored. Because the `tuneList` argument contains the four models that require tuning parameters, only `glm` needed to be specified in the `methodList`. Running the algorithm training process took about 20 minutes.
+
+```{r multi-train-run, eval=FALSE}
+set.seed(2013)
+t1 <- Sys.time()
+models <- caretList(Passed.All ~ .,
+                    methodList = c("glm"),
+                    data = train_set,
+                    trControl = train_control,
+                    tuneList = tuning_grids)
+t2 <- Sys.time()
+
+t2 - t1
+```
+
+```{r read-models, echo=FALSE}
+#saveRDS(models, file = "../9_Capstone_Personal/data/leg_models.rds")
+
+cat("Time difference of 19.79727 mins")
+
+models <- readRDS("../9_Capstone_Personal/data/leg_models.rds")
+```
+
+## Training Model Comparison 
+
+In comparing the results of all models, caret's `resamples()` function was used to analyze the list of train objects (`models`). Because the `trainControl()` function specified a summary function for two-classes, the summary of all results includes the receiver operating characteristic (ROC) curve and its corresponding area under the curve (AUC) metrics. The summary also provides sensitivity and specificity for each model.
+
+According to [caret's documentation](https://topepo.github.io/caret/variable-importance.html#model-independent-metrics) [@caret-doc], a series of cutoffs are used to determine the outcome for classification data. From these cutoffs, the area under the ROC curve (AUC) is calculated and used to measure variable importance. AUC values range from 0.50 to 1.0, with a value of 0.50 indicating that the model is no better than chance at predicting whether a bill passes and a value of 1.0 indicates perfect discrimination between bills that passed and bills that did not pass.
+
+```{r multi-comp-summary}
+all_models_results <- resamples(models)
+summary(all_models_results)
+```
+
+Based upon the best selected parameters from the `glmnet` model, LASSO regression was selected based upon the best tuning parameter, alpha = 1. 
+
+```{r glmnet-best-tune}
+models$glmnet$bestTune
+```
+
+
+As shown by their ROC metrics, the results of the training models suggest that all models show relatively high discrimination in detecting bills that passed vs. bills that did not pass (ROCs > 0.966). Similarly, all models were able to correctly identify the majority of passed bills (sensitivity *M*s > 89.5\%) and the majority of bills that did not pass (specificity *M*s > 89.4\%). To determine whether the differences in these metrics were statistically different from each other, pairwise comparisons using Bonferroni *p* value adjustments were conducted.
+
+```{r multi-comp-summary-diff}
+summary(diff(all_models_results))
+```
+
+According to the output, the lower diagonals show the *p* values for the pairwise comparison of each model, whereas the upper diagonal shows the estimated difference between the models. According to the ROC metrics, all models were highly similar to each other with the exception of the k-nearest neighbor model `knn`, whereby it significantly under performed relative to the other four models. In terms of sensitivity, the random factors `rf` model was significantly better than `knn`, `glm`, and `glmnet` (LASSO regression). In terms of specificity, all models were significantly different from each other, with the exception of the two highest performing models, `glm` and `glmnet`, followed by the two middle-performing models, `rf` and `rpart`.
+
+To visualize these differences, a boxplot is generated across all three metrics. As shown below, with the exception of the `knn` model, all four models have relatively similar discrimination and sensitivity with the `glm` and LASSO regression (`glmnet`) models demonstrating higher specificity.
+
+
+```{r multi-comp-boxplot, eval=FALSE, fig.width=8}
+bwplot(all_models_results, scales = list(x = list(relation = "free"),
+                                         y = list(relation = "free")))
+```
+
+```{r multi-comp-boxplot2, echo=FALSE, fig.width=8, fig.cap="Boxplot of ROC, Sensitivity, and Specificity by Model"}
+bwplot(all_models_results, scales = list(x = list(relation = "free"),
+                                         y = list(relation = "free")))
+```
+
+To identify which models are correlated with each other, only the `glm` model was moderately correlated with `knn` ($r = .415$) and `rf` ($r = .244$). All other models showed small correlations with each other, $r < |.300|$. 
+
+```{r multi-comp-scatterplot, eval=FALSE, fig.align='center'}
+modelCor(all_models_results)
+splom(all_models_results)
+```
+
+```{r multi-comp-cormat2, echo=FALSE}
+modelCor(all_models_results)
+```
+
+```{r multi-scatterplot2, echo=FALSE, fig.width=7, fig.height=6, fig.align='center', fig.cap="Scatterplot of ROC Values by Model"}
+splom(all_models_results)
+```
+
+## Evaluation on Test Set
+
+### Confusion Matrices
+
+To test the models against the test data set, the `predict()` function is applied to the list of models to obtain the actual \"Yes\" or \"No\" values in `y_hats`  and then calculate the confusion matrices for each model. From each confusion matrix, accuracy, sensitivity, and specificty were calculated.
+
+```{r multi-test-cmats}
+y_hats <- lapply(models, function(x) predict(x, test_set))
+
+cmats <- lapply(y_hats, function(x) {
+  confusionMatrix(x, test_set$Passed.All, positive = "Yes")
+})
+
+cmats_accuracy <- sapply(cmats, function(x) x$overall["Accuracy"])
+cmats_sensitivity <- sapply(cmats, function(x) x$byClass["Sensitivity"])
+cmats_specificity <- sapply(cmats, function(x) x$byClass["Specificity"])
+
+tibble(Model = names(cmats),
+       Accuracy = cmats_accuracy,
+       Sensitivity = cmats_sensitivity,
+       Specificity = cmats_specificity) |> 
+  arrange(-Accuracy)
+```
+
+The `glm` model demonstrated the highest sensitivity, meaning that it correctly identified 94\% of all passed bills in the test data set. As shown below, the model incorrectly categorized a total of 183 bills (7.5\%) out of 2,457 bills.
+
+```{r multi-test-cmat-glm}
+cmats$glm$table
+```
+
+### ROC Curves
+
+To examine ROC curves, the `predict()` function was applied to the models object with the argument `type = "prob")$Yes` to calculate the predicted probabilities of each bill in the test set. From these probabilities, the `pROC` package was used to calculate the ROC curve. The ROC data was then used to construct a data frame in order to plot each ROC curve.
+
+```{r multi-roc, message=FALSE}
+probs <- lapply(models, function(x) predict(x, test_set,
+                                            type = "prob")$Yes)
+
+rocs <- lapply(probs, function(x) roc(test_set$Passed.All, x))
+
+roc_data <- bind_rows(
+  lapply(names(rocs), function(model) {
+    roc_obj <- rocs[[model]]
+    
+    tibble(Model = model,
+           FPR = 1 - roc_obj$specificities,
+           TPR = roc_obj$sensitivities,
+           AUC = str_extract(auc(roc_obj),
+                             "\\d+.\\d{3}")
+    )
+  })
+)
+
+roc_summary_df <- roc_data |> 
+  select(Model, AUC) |> 
+  distinct() |> 
+  mutate(Model_labels = paste0(Model, " AUC: ", AUC))
+
+roc_models <- unique(roc_data$Model)
+roc_labels <- roc_summary_df$Model_labels
+names(roc_labels) <- roc_models
+
+p_roc <- ggplot(roc_data,
+                aes(x = FPR,
+                    y = TPR,
+                    color = Model)) +
+  geom_line(linewidth = 1) +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", color = "grey") +
+  scale_color_brewer(palette = "Paired",
+                     labels = roc_labels) +
+  labs(x = "False Positive Rate (1 - Specificity)",
+       y = "True Positive Rate (Sensitivity)") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        axis.line = element_line(color = "darkgrey"),
+        axis.ticks = element_line(color = "darkgrey"))
+```
+
+```{r multi-roc-plot, echo=FALSE, fig.cap="ROC Curves by Model"}
+p_roc
+```
+
+
+Based on the graph of the ROC curves, all models with the exception of `knn` had similar ROC curve metrics and were able to discriminate between bills that passed and did not pass more than 97.7\% of the time. To run model comparisons on ROC curves, the `roc.test()` function from the `pROC` package was used to compare each pair of ROC curves. The default method, the DeLong test, compares the areas under two or more correlated ROC curves. To adjust *p* values for multiple comparisons, the Bonferroni correction was applied.
+
+```{r multi-roc-comp}
+pairs <- combn(roc_models, 2, simplify = FALSE)
+
+roc_comparisons <- map_dfr(pairs, function(pair) {
+  model_A <- pair[1]
+  model_B <- pair[2]
+  
+  test_res <- roc.test(rocs[[model_A]], rocs[[model_B]])
+  
+  tibble(
+    Model.Comparison = paste(model_A, "vs.", model_B),
+    D.Statistic      = test_res$statistic,
+    p.value.raw      = test_res$p.value
+  )
+})
+
+
+roc_comparisons <- roc_comparisons %>%
+  mutate(p.value.adj = p.adjust(p.value.raw, method = "bonferroni"))
+
+print(roc_comparisons)
+```
+
+Based on the results, only the `knn` showed meaningful differences in discrimination relative to the other models such that the `knn` model yielded a significantly smaller AUC. Given the interpretability and simplicity of the `glm` model and the fact that this model did not significantly differ from the LASSO regression, decision tree, or random forest models, the `glm` model was chosen as the final algorithm.
+
+### Variable Importance
+
+To identify which predictors were the most important, a singular fitted GLM model was constructed for the purpose of using caret's `varImp()` function (this function does not run on `models$glm`). 
+
+```{r vip, eval=FALSE}
+# Fitted GLM model
+fit_glm <- train(Passed.All ~ ., method = "glm", data = train_set, trControl = train_control, metric = "ROC")
+
+# Predicted values from GLM model
+y_hat_glm <- predict(fit_glm, test_set)
+probs_glm <- predict(fit_glm, test_set, type = "prob")$Yes
+
+# varImp(models$glm) returns an error
+plot(varImp(fit_glm))
+```
+
+```{r vip2, echo=FALSE, fig.cap="Variable Importance for GLM Model"}
+fit_glm <- train(Passed.All ~ ., method = "glm", data = train_set, trControl = train_control, metric = "ROC")
+y_hat_glm <- predict(fit_glm, test_set)
+probs_glm <- predict(fit_glm, test_set, type = "prob")$Yes
+plot(varImp(fit_glm))
+```
+
+To see how the top four predictors influenced the final GLM model, predicted probabilities were averaged and plotted for the predictors: Standalone, Biennium, Carryover, and General File. 
+
+```{r vip-slopes, eval=FALSE}
+df_plot <- data.frame(prob = probs_glm,
+                      fit = as.numeric(y_hat_glm),
+                      standalone = test_set$Is.Standalone.Standalone.Bill,
+                      genfile = test_set$Placed.GenFile.Was.Not.Placed.on.General.File,
+                      carryover = test_set$IsCarryoverBill.Is.Not.Carryover.Bill,
+                      biennium = test_set$Introduced.Biennium.Second) |> 
+  mutate(biennium = if_else(biennium == 1, "Second Regular Session", "First Regular Session"),
+         carryover = if_else(carryover == 1, "Not a Carryover Bill", "Carryover Bill"),
+         genfile = if_else(genfile == 1, "Not Placed on General File", "Placed on General File"),
+         standalone = if_else(standalone == 1, "Is Standalone Bill", "Is Package or Rider Bill"),
+         ) |> 
+  pivot_longer(cols = c(standalone, carryover, genfile, biennium)) |> 
+  group_by(name, value) |> 
+  reframe(mean_prob = mean(prob))
+
+df_plot |> 
+  ggplot(aes(x = value, y = mean_prob, group = name)) +
+  geom_line() +
+  geom_point() +
+  geom_text_repel(aes(label = round(mean_prob, 3)),
+                  direction = "y") +
+  facet_wrap(vars(name), scales = "free_x") +
+  labs(x = NULL, y = NULL,
+       title = "Mean Predicted Probabilities") +
+  theme(plot.title.position = "plot")
+
+```
+
+```{r vip-slopes2, echo=FALSE, fig.cap="Mean Predicted Probabilities for Highly Important Variables in GLM Model"}
+df_plot <- data.frame(prob = probs_glm,
+                      fit = as.numeric(y_hat_glm),
+                      standalone = test_set$Is.Standalone.Standalone.Bill,
+                      genfile = test_set$Placed.GenFile.Was.Not.Placed.on.General.File,
+                      carryover = test_set$IsCarryoverBill.Is.Not.Carryover.Bill,
+                      biennium = test_set$Introduced.Biennium.Second) |> 
+  mutate(biennium = if_else(biennium == 1, "Second Regular Session", "First Regular Session"),
+         carryover = if_else(carryover == 1, "Not a Carryover Bill", "Carryover Bill"),
+         genfile = if_else(genfile == 1, "Not Placed on General File", "Placed on General File"),
+         standalone = if_else(standalone == 1, "Is Standalone Bill", "Is Package or Rider Bill"),
+         ) |> 
+  pivot_longer(cols = c(standalone, carryover, genfile, biennium)) |> 
+  group_by(name, value) |> 
+  reframe(mean_prob = mean(prob))
+
+df_plot |> 
+  ggplot(aes(x = value, y = mean_prob, group = name)) +
+  geom_line() +
+  geom_point() +
+  geom_text_repel(aes(label = round(mean_prob, 3)),
+                  direction = "y") +
+  facet_wrap(vars(name), scales = "free_x") +
+  labs(x = NULL, y = NULL)
+
+```
+
+As shown above, being a package or rider bill is the strongest predictor of a bill passing and changes the average predicted probability of passing from 34.0\% to 97.2\%. Similarly, placing a bill on General File increases the average predicted probability from 14.4\% to 79.3\%. Introducing a bill in the first regular session and not being a carryover bill improves a bill's passage some, but not as much as being a package bill or placing a bill on General File.
+
+# Results
+
+## Final Holdout Preprocessing
+
+The final holdout data set included all introduced bills from the 108th Legislature. Before determining the performance of the GLM model on the final holdout data set, the same recoding and preprocessing procedures were conducted.
+
+First, `leg_final_test` excluded special session bills and recoded other low-frequency subcategories into larger subcategories.
+
+```{r final-test-df}
+leg_final_test_selectvars <- leg_final_test |> 
+  filter(Introduced.Biennium != "Special",
+         Committee != "Redistricting",
+         Committee != "None") |> 
+  mutate(Cmte = factor(case_when(Committee == "Business and Labor" ~ "Other",
+                                 Committee == "Executive Board" ~ "Other",
+                                 Committee == "General Affairs" ~ "Other",
+                                 Committee == "Natural Resources" ~ "Other",
+                                 Committee == "Nebraska Retirement Systems" ~ "Other",
+                                 Committee == "Urban Affairs" ~ "Other",
+                                 TRUE ~ Committee)),
+         Introducer = factor(if_else(
+           Introducer.Type == "Senator", "Senator", "Committee or Speaker")),
+         Is.Standalone = factor(if_else(Bill.Package.Category == "Standalone Bill", "Standalone Bill", "Package Bill or Provisions Amended")),
+         Is.Priority = factor(if_else(Priority.Owner == "Is Not a Priority Bill", "Not a Priority Bill", "Is a Priority Bill")))|> 
+  select(-c(Committee, Introducer.Type, Bill.Package.Category, Priority.Owner)) |> 
+  mutate(across(where(is.factor), ~fct_drop(.)))
+```
+
+Then, the final holdout test data set was  preprocessed to dummy code categorical variables and center and scale continuous variables. Because all bills in this data set were from the same legislative session, the method `nzv` (non-zero variance) was removed from the method argument in the `preProcess()` function to prevent the caret package from removing `Leg` as a predictor.
+
+```{r final-preproc}
+predictors_test <- select(leg_final_test_selectvars, -Passed.All)
+dummies_test <- dummyVars(~ ., data = predictors_test, fullRank = TRUE)
+leg_dummy_test <- data.frame(predict(dummies_test, newdata = predictors_test)) |> 
+  mutate(across(1:5, ~factor(.)),
+         across(8:20, ~factor(.)))
+leg_dummy_test$Passed.All <- leg_final_test_selectvars$Passed.All
+
+# Took "nzv" off because Leg = 108
+leg_preproc_test <- preProcess(leg_dummy_test, method = c("scale", "center"))
+leg_preproc
+
+leg_transf_test <- predict(leg_preproc_test, leg_dummy_test)
+```
+
+## Final Model Performance
+
+The final testing showed that the GLM algorithm was highly successful at discriminating between passed bills and bills that did not pass (AUC = 0.973) with sensitivity percentages above 94.3\%. The model showed less success in correctly predicting bills that did not pass (specificity = 87.3\%). As shown by the confusion matrix, the GLM model correctly identified 90.43% of all bills (*n* = 1,504). These metrics were slightly lower than the corresponding test set data (*n* = 2,457), which was a subset of the main training set (AUC = 0.978, sensitivity = 0.941, specificity = 0.912)
+
+```{r final-testing, eval=FALSE}
+y_hat_glm_final <- predict(fit_glm, leg_transf_test)
+probs_glm_final <- predict(fit_glm, leg_transf_test, type = "prob")$Yes
+
+confusionMatrix(y_hat_glm_final, leg_transf_test$Passed.All, positive = "Yes")
+
+roc_glm_final <- roc(leg_transf_test$Passed.All, probs_glm_final)
+
+plot(roc_glm_final, print.auc = TRUE)
+```
+
+
+```{r final-test-cmat, echo=FALSE, message=FALSE}
+
+y_hat_glm_final <- predict(fit_glm, leg_transf_test)
+probs_glm_final <- predict(fit_glm, leg_transf_test, type = "prob")$Yes
+
+confusionMatrix(y_hat_glm_final, leg_transf_test$Passed.All, positive = "Yes")
+
+```
+
+
+```{r final-testing-roc, echo=FALSE, fig.height=4, message=FALSE, fig.cap="ROC Curve in Final GLM Model Predicting Passed Legislative Bills in 108th Nebraska Legislature"}
+roc_glm_final <- roc(leg_transf_test$Passed.All, probs_glm_final)
+
+plot(roc_glm_final, print.auc = TRUE)
+```
+
+# Discussion
+
+## Overview
+
+The purpose of this project was to evaluate the effectiveness of machine learning algorithms on predicting the passage of Nebraska legislative bills. To do this, 11,584 legislative bills introduced in the Nebraska Legislature were scraped from journal chronologies spanning 2007 to 2024. Preliminary data analysis revealed that once a bill advances from the first round of debate (i.e., General File), it is highly likely to pass. Thus, bill characteristics relating to second and third rounds of debate were excluded from the final data set. Other bill characteristics that were included as predictors in the model included, but were not limited to, whether or not the bill was a standalone bill, package bill, or "rider" bill, whether or not the bill was a carryover bill from the first regular session of the biennium, and referred committee. The outcome variable (passage of a bill into law) was expanded to include provisions of legislative bills that were amended into package bills. 
+
+Using a training data set of 7,372 legislative bills, model evaluation was conducted via repeated 10-fold cross-validation across three complete iterations for five different models: generalized linear model, LASSO regression, random forest, decision tree, and k-nearest neighbor. Based on mean area under the ROC curve values, as well as sensitivity and specificity percentages, the generalized linear model and LASSO regression demonstrated the best overall predictive accuracy. However, given that there were no significant differences between the two models, the generalized linear model was chosen to predict the accuracy of an independent set of legislative bills (*N* = 1,587). The final generalized linear model correctly predicted bill outcomes for 90.4\% of bills with an exceptionally high discriminative ability (AUC = 0.973).
+
+## Potential Impact
+
+This work has the potential to be very useful to Nebraska policymakers, advocates, and communities that need to make decisions regarding the success rate of bills passed in the Nebraska Legislature. Given that package bills had the highest chance of success, lawmakers may want to think strategically about bills that are amended into package bills. This work also suggests that the trend of using package bills as vehicles for bill passage may be indicative of structural changes within the Nebraska Legislature. Lawmakers may also want to use this work to prioritize their legislative priorities within a given legislative session. Standalone bills, bills not yet placed on General File, and carryover bills had much lower predictive probabilities of passing. If a standalone bill does not leave a committee and is carried over to the second regular session, lawmakers may want to find a package bill as a vehicle for passage. If the bill is highly consequential, knowing the chances of success before attempting to pass the bill as a standalone bill may help with decision making when assigning time and resources toward passing the bill.
+
+## Limitations
+
+Although this work may be highly impactful, this research project is not without limitations. First, there were many important bill characteristics that were not readily accessible from the journal chronologies, including the size of the fiscal impact. Each legislative bill that requires an appropriation, will have a corresponding A-bill. However, the size of the fiscal impact was not included in this analysis. Second, data collection process did not distinguish between bills that varied between certain categories at certain times during the legislative session. For example, there may have been bills that were initially amended into a package bill but then failed to advance as a package bill and returned to its standalone state. These bills would be categorized as standalone bills, but may also warrant its own category for bill type. Finally, this project did not track either the political affiliations or legislative district of the bill introducer, which would likely alter the likelihood of a bill passing. Although the Nebraska unicameral is officially nonpartisan, the political realities likely influence the lawmaking process, which was not captured in this data set.
+
+##   Future Work
+
+In the future, policy researchers should continue gathering journal chronologies for current and future legislative sessions. As more training data is added, the predictive accuracy of the model would likely improve. Policy researchers should also consider other information that could be scraped from the journal chronologies or other legislative archived documents. With emerging artificial intelligence technologies, there may be new methods of collecting information, such as fiscal impact based upon the legislative records on the Nebraska Legislature's website. In addition, including the political affiliation or legislative district may require more advanced machine learning algorithms given that there are 49 different legislative districts that change after each decennial census. 
+
+# Conclusion
+
+To evaluate the effectiveness of machine learning algorithms for predicting Nebraska legislative bill passage, this project compared five common algorithms for classification data (i.e., generalized linear model, LASSO regression, random forest, decision trees, and k-nearest neighbor). After training each algorithm on a data set of more than 7,000 legislative bills with  20 different predictors, the generalized linear model and LASSO regression achieved the highest predictive accuracy. As the simpler model, the generalized linear model was, then, used to predict more than 1,500 legislative bills of an independent data set. The results of the generalized linear model demonstrated an outstanding level of discrimination, providing a strong basis for forecasting whether a bill will become Nebraska state law.
+
+\newpage
+
+# References
